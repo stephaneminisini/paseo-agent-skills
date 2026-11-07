@@ -5,13 +5,11 @@
 Install on each host whose agents should use skills:
 
 ```bash
-npm install
-npm run typecheck
-paseo plugin install /absolute/path/to/paseo-langfuse-skills
+paseo plugin add git:stephaneminisini/paseo-langfuse-skills
 paseo plugin ls            # langfuse-skills should be running
 ```
 
-After editing the source, run `npm run typecheck` and `paseo plugin reload langfuse-skills`.
+For a local checkout, see the [README](../README.md#development).
 
 ## Key file
 
