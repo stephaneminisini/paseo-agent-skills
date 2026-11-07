@@ -9,7 +9,10 @@ export type SkillStoreErrorKind =
   | "duplicate-path"
   | "no-skill-md"
   | "non-text"
-  | "hash-mismatch";
+  | "hash-mismatch"
+  | "path-conflict"
+  | "version-mismatch"
+  | "write-failed";
 
 /** A skill version that cannot be stored safely. Nothing is written when this is thrown. */
 export class SkillStoreError extends Error {
@@ -91,6 +94,15 @@ function plan(dir: string, skill: SkillVersion): Array<{ file: SkillFile; target
     }
     return { file, target };
   });
+  for (const target of seen) {
+    const other = [...seen].find((candidate) => candidate.startsWith(target + path.sep));
+    if (other) {
+      throw new SkillStoreError(
+        "path-conflict",
+        `Skill ${skill.name} v${skill.version} uses ${path.relative(dir, target)} as both a file and a folder.`,
+      );
+    }
+  }
   if (!seen.has(path.join(dir, SKILL_MD))) {
     throw new SkillStoreError("no-skill-md", `Skill ${skill.name} v${skill.version} has no SKILL.md.`);
   }
@@ -110,61 +122,113 @@ function errorCode(error: unknown): string | undefined {
   return error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : undefined;
 }
 
+/** In-flight stores by version folder, so overlapping searches share one download. */
+const inFlight = new Map<string, Promise<{ dir: string; downloaded: boolean }>>();
+
 /**
  * Makes sure one skill version is stored, downloading it through `load` only when missing.
  * Files go to a temporary sibling folder, then the folder is renamed into place, so a version
  * folder with a manifest is always complete and is never modified afterwards.
  *
- * @throws {SkillStoreError} when the name, a path, a content type or a hash is not acceptable.
- * @throws whatever `load` rejects with, and filesystem errors other than losing a rename race.
+ * @throws {SkillStoreError} when the name, a path, a content type, a hash or the downloaded
+ *   version is not acceptable, or when writing the files fails ("write-failed").
+ * @throws whatever `load` rejects with.
  */
-export async function ensureSkillVersion(
+export function ensureSkillVersion(
   root: string,
   ref: { name: string; version: number },
   load: () => Promise<SkillVersion>,
   meta: StoreMeta,
 ): Promise<{ dir: string; downloaded: boolean }> {
-  const dir = versionDir(root, ref.name, ref.version);
+  let dir: string;
+  try {
+    dir = versionDir(root, ref.name, ref.version);
+  } catch (error) {
+    return Promise.reject(error);
+  }
+  const pending = inFlight.get(dir);
+  if (pending) return pending.then(({ dir: stored }) => ({ dir: stored, downloaded: false }));
+  const task = store(dir, ref, load, meta).finally(() => inFlight.delete(dir));
+  inFlight.set(dir, task);
+  return task;
+}
+
+async function store(
+  dir: string,
+  ref: { name: string; version: number },
+  load: () => Promise<SkillVersion>,
+  meta: StoreMeta,
+): Promise<{ dir: string; downloaded: boolean }> {
   const manifestPath = path.join(dir, MANIFEST_FILE);
   if (await exists(manifestPath)) return { dir, downloaded: false };
 
   const skill = await load();
+  if (skill.name !== ref.name || skill.version !== ref.version) {
+    throw new SkillStoreError(
+      "version-mismatch",
+      `Asked Langfuse for ${ref.name} v${ref.version} but received ${skill.name} v${skill.version}.`,
+    );
+  }
   const tmpDir = `${dir}.tmp-${randomUUID()}`;
   const entries = plan(tmpDir, skill);
   try {
-    for (const { file, target } of entries) {
-      await mkdir(path.dirname(target), { recursive: true });
-      await writeFile(target, file.content, "utf8");
+    try {
+      for (const { file, target } of entries) {
+        await mkdir(path.dirname(target), { recursive: true });
+        await writeFile(target, file.content, "utf8");
+      }
+      const manifest = {
+        name: skill.name,
+        version: skill.version,
+        baseUrl: meta.baseUrl,
+        fetchedAt: (meta.now?.() ?? new Date()).toISOString(),
+        files: skill.files.map(({ path: filePath, sha256Hash }) => ({ path: filePath, sha256Hash })),
+      };
+      await writeFile(path.join(tmpDir, MANIFEST_FILE), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+    } catch (error) {
+      throw new SkillStoreError(
+        "write-failed",
+        `Could not store skill ${skill.name} v${skill.version}: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
-    const manifest = {
-      name: skill.name,
-      version: skill.version,
-      baseUrl: meta.baseUrl,
-      fetchedAt: (meta.now?.() ?? new Date()).toISOString(),
-      files: skill.files.map(({ path: filePath, sha256Hash }) => ({ path: filePath, sha256Hash })),
-    };
-    await writeFile(path.join(tmpDir, MANIFEST_FILE), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+    return { dir, downloaded: await moveIntoPlace(tmpDir, dir, manifestPath) };
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true });
+  }
+}
 
-    if (await exists(manifestPath)) {
-      await rm(tmpDir, { recursive: true, force: true });
-      return { dir, downloaded: false };
-    }
-    // A folder without a manifest is left from an interrupted write outside this plugin's
-    // rename; replace it.
-    if (await exists(dir)) await rm(dir, { recursive: true, force: true });
+function isFolderTaken(error: unknown): boolean {
+  const code = errorCode(error);
+  return code === "EEXIST" || code === "ENOTEMPTY" || code === "EPERM";
+}
+
+/**
+ * Renames the finished temp folder to `dir`. Returns false when another writer finished first.
+ * A complete folder is never removed: only a folder without a manifest, left by an interrupted
+ * write, is moved aside atomically and then deleted.
+ */
+async function moveIntoPlace(tmpDir: string, dir: string, manifestPath: string): Promise<boolean> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       await rename(tmpDir, dir);
+      return true;
     } catch (error) {
-      const code = errorCode(error);
-      if ((code === "EEXIST" || code === "ENOTEMPTY" || code === "EPERM") && (await exists(manifestPath))) {
-        await rm(tmpDir, { recursive: true, force: true });
-        return { dir, downloaded: false };
+      if (!isFolderTaken(error)) throw error;
+      if (await exists(manifestPath)) return false;
+      const stale = `${dir}.stale-${randomUUID()}`;
+      try {
+        await rename(dir, stale);
+      } catch (moveError) {
+        if (errorCode(moveError) !== "ENOENT") throw moveError;
       }
-      throw error;
+      if (await exists(path.join(stale, MANIFEST_FILE))) {
+        // Another writer completed between the check and the move: put its folder back.
+        await rename(stale, dir).catch(() => undefined);
+        if (await exists(manifestPath)) return false;
+      }
+      await rm(stale, { recursive: true, force: true });
     }
-    return { dir, downloaded: true };
-  } catch (error) {
-    await rm(tmpDir, { recursive: true, force: true });
-    throw error;
   }
+  if (await exists(manifestPath)) return false;
+  throw new SkillStoreError("write-failed", `Could not move the skill into ${dir}.`);
 }

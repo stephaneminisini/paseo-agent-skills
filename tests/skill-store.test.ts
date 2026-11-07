@@ -97,7 +97,7 @@ describe("ensureSkillVersion", () => {
   });
 
   it("stores nested paths inside the version folder", async () => {
-    const skill = cutRelease([file("SKILL.md", SKILL_MD), file("scripts/run.sh", SCRIPT)]);
+    const skill = { ...cutRelease([file("SKILL.md", SKILL_MD), file("scripts/run.sh", SCRIPT)]), name: "team/cut-release" };
     const { dir } = await ensureSkillVersion(root, { name: "team/cut-release", version: 2 }, async () => skill, META);
     expect(dir).toBe(path.join(root, "team", "cut-release", "v2"));
     expect(await readFile(path.join(dir, "scripts", "run.sh"), "utf8")).toBe(SCRIPT);
@@ -140,6 +140,49 @@ describe("ensureSkillVersion", () => {
     expect(await listTree(path.join(root, "cut-release"))).toEqual(
       ["v2", `v2/${MANIFEST_FILE}`, "v2/SKILL.md", "v2/bundle-migrations.sh"].map((p) => path.normalize(p)).sort(),
     );
+  });
+
+  it("never removes a folder another call already returned", async () => {
+    const ref = { name: "cut-release", version: 2 };
+    for (let round = 0; round < 20; round += 1) {
+      await rm(path.join(root, "cut-release"), { recursive: true, force: true });
+      const missing: string[] = [];
+      await Promise.all(
+        Array.from({ length: 16 }, async () => {
+          const { dir } = await ensureSkillVersion(root, ref, async () => cutRelease(), META);
+          await readFile(path.join(dir, "SKILL.md"), "utf8").catch(() => missing.push(dir));
+        }),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      expect(missing).toEqual([]);
+      expect(await readFile(path.join(root, "cut-release", "v2", "SKILL.md"), "utf8")).toBe(SKILL_MD);
+    }
+  });
+
+  it("refuses a file that is also used as a folder", async () => {
+    const files = [file("SKILL.md", SKILL_MD), file("a", "x"), file("a/b", "y")];
+    const promise = ensureSkillVersion(root, { name: "cut-release", version: 2 }, async () => cutRelease(files), META);
+    expect(await rejectionKind(promise)).toBe("path-conflict");
+    expect(await listTree(root)).toEqual([]);
+  });
+
+  it("reports a failed write as a store error and leaves nothing behind", async () => {
+    const files = [file("SKILL.md", SKILL_MD), file("x".repeat(300), "too long")];
+    const promise = ensureSkillVersion(root, { name: "cut-release", version: 2 }, async () => cutRelease(files), META);
+    expect(await rejectionKind(promise)).toBe("write-failed");
+    // Only the skill's empty parent folder may remain; no version or temp folder.
+    expect(await listTree(root)).toEqual(["cut-release"]);
+  });
+
+  it("refuses a download whose version differs from the one requested", async () => {
+    const promise = ensureSkillVersion(
+      root,
+      { name: "cut-release", version: 3 },
+      async () => ({ ...cutRelease(), version: 4 }),
+      META,
+    );
+    expect(await rejectionKind(promise)).toBe("version-mismatch");
+    expect(await listTree(root)).toEqual([]);
   });
 
   it("replaces a version folder that has no manifest", async () => {
