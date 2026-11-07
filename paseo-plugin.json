@@ -1,0 +1,6 @@
+{
+  "id": "langfuse-skills",
+  "name": "Langfuse Skills",
+  "description": "Attach Langfuse skills to an agent launch. Files are stored per version on the host.",
+  "requirements": { "paseo": ">=0.15.0" }
+}
