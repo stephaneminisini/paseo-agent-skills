@@ -7,7 +7,7 @@ describe("ConfigSchema", () => {
     expect(ConfigSchema.parse({})).toEqual({
       baseUrl: "https://us.cloud.langfuse.com",
       label: "production",
-      keyFilePath: "~/.config/paseo-langfuse-skills/langfuse.env",
+      keyFilePath: "~/.config/paseo-agent-skills/langfuse.env",
     });
   });
 

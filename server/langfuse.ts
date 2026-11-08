@@ -131,7 +131,7 @@ export function createLangfuseClient(options: LangfuseClientOptions): LangfuseCl
     }
     const parsed = schema.safeParse(await response.json().catch(() => undefined));
     if (!parsed.success) {
-      console.error("[langfuse-skills] Unexpected Langfuse response", {
+      console.error("[agent-skills] Unexpected Langfuse response", {
         path,
         issues: parsed.error.issues,
       });

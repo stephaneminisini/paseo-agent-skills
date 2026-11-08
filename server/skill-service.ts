@@ -112,7 +112,7 @@ export function createSkillService(deps: SkillServiceDeps): SkillService {
           return ref ? { item: await prepare(config, client, ref) } : null;
         } catch (error) {
           if (!(error instanceof LangfuseError || error instanceof SkillStoreError)) throw error;
-          console.error("[langfuse-skills] Skipping skill", { name: skill.name, message: error.message });
+          console.error("[agent-skills] Skipping skill", { name: skill.name, message: error.message });
           return { error };
         }
       });

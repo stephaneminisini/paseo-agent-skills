@@ -14,7 +14,7 @@ export const testLangfuseRpc = defineRpc({
 });
 
 export const skillsSource = defineAttachmentSource({
-  id: "langfuse-skills",
+  id: "agent-skills",
   title: "Skill",
   icon: "Sparkles",
   pickerTitle: "Attach Langfuse skill",

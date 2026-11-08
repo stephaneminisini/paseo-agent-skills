@@ -7,6 +7,8 @@ import { createSkillService, SettingsUnavailableError } from "./server/skill-ser
 import { configSettings } from "./shared/settings";
 import { searchSkillsRpc, testLangfuseRpc } from "./shared/skills";
 
+const DATA_ROOT = path.join(homedir(), ".local", "share", "paseo-agent-skills");
+
 export default function contribute(server: PluginServerContext) {
   const config = server.registerSettings(configSettings);
 
@@ -18,7 +20,7 @@ export default function contribute(server: PluginServerContext) {
     },
     readKeys: (filePath) => readLangfuseKeys(filePath),
     createLangfuse: (options) => createLangfuseClient(options),
-    storeRoot: path.join(homedir(), ".local", "share", "paseo-langfuse-skills", "skills"),
+    storeRoot: path.join(DATA_ROOT, "langfuse"),
   });
 
   server.handle(searchSkillsRpc, ({ query }) => service.search(query));
