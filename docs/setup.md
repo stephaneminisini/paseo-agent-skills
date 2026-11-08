@@ -45,5 +45,8 @@ Local skills need no key file. Open **Skills** in the sidebar, choose **Found**,
 skill, or use **Import...** with a folder path such as `~/.claude/skills/my-skill`. It is stored
 under `~/.local/share/paseo-agent-skills/local/<name>/v<version>/`.
 
+To write one from scratch, press **New skill**, edit `SKILL.md` and add files in the editor, then
+**Save**.
+
 Then start a new workspace, open **Attach > Skill**, pick the skill, and send. Langfuse skills
 picked there are downloaded to `~/.local/share/paseo-agent-skills/langfuse/<name>/v<version>/`.
