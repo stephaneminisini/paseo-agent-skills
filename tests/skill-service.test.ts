@@ -254,3 +254,15 @@ describe("createSkillService.list", () => {
     expect(langfuseError).toBe("Langfuse down");
   });
 });
+
+describe("createSkillService.importPath", () => {
+  it("expands ~ to the home folder", async () => {
+    const dir = path.join(home, "my-skills", "pr-review");
+    await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, "SKILL.md"), localFiles("pr-review")[0]?.content ?? "");
+    expect(await service(new FakeLangfuse([])).importPath("~/my-skills/pr-review")).toEqual({
+      name: "pr-review",
+      version: 1,
+    });
+  });
+});

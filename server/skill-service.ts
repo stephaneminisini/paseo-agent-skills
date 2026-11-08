@@ -1,3 +1,4 @@
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { PluginAttachmentItem, PluginAttachmentSearchPayload } from "@getpaseo/plugin";
 import type { Config } from "../shared/settings";
@@ -243,7 +244,10 @@ export function createSkillService(deps: SkillServiceDeps): SkillService {
       return { rows: [...rows.values()].sort((a, b) => byName(a.name, b.name)), langfuseError };
     },
     async importPath(folder) {
-      const skill = await importFromPath(deps.localStore, folder, deps.home);
+      const trimmed = folder.trim();
+      const expanded =
+        trimmed === "~" ? deps.home : trimmed.startsWith("~/") ? path.join(deps.home, trimmed.slice(2)) : trimmed;
+      const skill = await importFromPath(deps.localStore, expanded, deps.home);
       return { name: skill.name, version: skill.version };
     },
     async importFound(id) {
