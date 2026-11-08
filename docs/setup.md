@@ -5,8 +5,8 @@
 Install on each host whose agents should use skills:
 
 ```bash
-paseo plugin add git:stephaneminisini/paseo-langfuse-skills
-paseo plugin ls            # langfuse-skills should be running
+paseo plugin add git:stephaneminisini/paseo-agent-skills
+paseo plugin ls            # agent-skills should be running
 ```
 
 For a local checkout, see the [README](../README.md#development).
@@ -16,12 +16,12 @@ For a local checkout, see the [README](../README.md#development).
 The plugin reads Langfuse API keys from a file on the host, never from settings:
 
 ```bash
-mkdir -p ~/.config/paseo-langfuse-skills
-cat > ~/.config/paseo-langfuse-skills/langfuse.env <<'KEYS'
+mkdir -p ~/.config/paseo-agent-skills
+cat > ~/.config/paseo-agent-skills/langfuse.env <<'KEYS'
 LANGFUSE_PUBLIC_KEY=pk-lf-...
 LANGFUSE_SECRET_KEY=sk-lf-...
 KEYS
-chmod 600 ~/.config/paseo-langfuse-skills/langfuse.env
+chmod 600 ~/.config/paseo-agent-skills/langfuse.env
 ```
 
 The file must not be readable by other users. If you already use the Saved Prompts plugin, point
@@ -29,18 +29,21 @@ The file must not be readable by other users. If you already use the Saved Promp
 
 ## Settings
 
-Open **Settings → host → Plugins → Langfuse Skills → Langfuse**:
+Open **Settings → host → Plugins → Agent Skills → Langfuse**:
 
 | Setting       | Default                                        |
 | ------------- | ---------------------------------------------- |
 | Base URL      | `https://us.cloud.langfuse.com`                |
 | Label         | `production`                                   |
-| Key file path | `~/.config/paseo-langfuse-skills/langfuse.env` |
+| Key file path | `~/.config/paseo-agent-skills/langfuse.env` |
 
 Save, then press **Test connection**. It shows the Langfuse project name.
 
 ## First test
 
-Start a new workspace, open **Attach → Skill**, pick a skill, and send. Check that
-`~/.local/share/paseo-langfuse-skills/skills/<name>/v<version>/` holds `SKILL.md` and
-`.langfuse-skill.json`.
+Local skills need no key file. Open **Skills** in the sidebar, choose **Found**, and import a
+skill, or use **Import...** with a folder path such as `~/.claude/skills/my-skill`. It is stored
+under `~/.local/share/paseo-agent-skills/local/<name>/v<version>/`.
+
+Then start a new workspace, open **Attach > Skill**, pick the skill, and send. Langfuse skills
+picked there are downloaded to `~/.local/share/paseo-agent-skills/langfuse/<name>/v<version>/`.
