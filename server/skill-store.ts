@@ -71,42 +71,56 @@ function sha256Base64(content: string): string {
   return createHash("sha256").update(content, "utf8").digest("base64");
 }
 
-/** Validates every file before anything is written; returns each file's target path. */
-function plan(dir: string, skill: SkillVersion): Array<{ file: SkillFile; target: string }> {
+/**
+ * Checks a skill's file paths: each stays inside `dir`, none repeats, none is both a file and a
+ * folder, and SKILL.md is at the root. Returns each path's target in `dir`, in input order.
+ *
+ * @throws {SkillStoreError} kinds "unsafe-path", "duplicate-path", "path-conflict", "no-skill-md".
+ */
+export function checkSkillPaths(dir: string, paths: string[], label: string): string[] {
   const seen = new Set<string>();
-  const entries = skill.files.map((file) => {
-    const target = checkFilePath(dir, file.path);
+  const targets = paths.map((filePath) => {
+    const target = checkFilePath(dir, filePath);
     if (seen.has(target)) {
-      throw new SkillStoreError("duplicate-path", `Skill ${skill.name} lists ${file.path} twice.`);
+      throw new SkillStoreError("duplicate-path", `Skill ${label} lists ${filePath} twice.`);
     }
     seen.add(target);
-    if (!file.contentType.startsWith("text/")) {
-      throw new SkillStoreError(
-        "non-text",
-        `Skill ${skill.name} v${skill.version} contains a non-text file (${file.path}, ${file.contentType}), which this plugin does not support yet.`,
-      );
-    }
-    if (sha256Base64(file.content) !== file.sha256Hash) {
-      throw new SkillStoreError(
-        "hash-mismatch",
-        `Skill ${skill.name} v${skill.version} file ${file.path} does not match its hash.`,
-      );
-    }
-    return { file, target };
+    return target;
   });
   for (const target of seen) {
-    const other = [...seen].find((candidate) => candidate.startsWith(target + path.sep));
-    if (other) {
+    if ([...seen].some((candidate) => candidate.startsWith(target + path.sep))) {
       throw new SkillStoreError(
         "path-conflict",
-        `Skill ${skill.name} v${skill.version} uses ${path.relative(dir, target)} as both a file and a folder.`,
+        `Skill ${label} uses ${path.relative(dir, target)} as both a file and a folder.`,
       );
     }
   }
   if (!seen.has(path.join(dir, SKILL_MD))) {
-    throw new SkillStoreError("no-skill-md", `Skill ${skill.name} v${skill.version} has no SKILL.md.`);
+    throw new SkillStoreError("no-skill-md", `Skill ${label} has no SKILL.md.`);
   }
-  return entries;
+  return targets;
+}
+
+/** Validates every file before anything is written; returns each file's target path. */
+function plan(dir: string, skill: SkillVersion): Array<{ file: SkillFile; target: string }> {
+  const label = `${skill.name} v${skill.version}`;
+  const targets = checkSkillPaths(
+    dir,
+    skill.files.map((file) => file.path),
+    label,
+  );
+  return skill.files.map((file, index) => {
+    if (!file.contentType.startsWith("text/")) {
+      throw new SkillStoreError(
+        "non-text",
+        `Skill ${label} contains a non-text file (${file.path}, ${file.contentType}), which this plugin does not support yet.`,
+      );
+    }
+    if (sha256Base64(file.content) !== file.sha256Hash) {
+      throw new SkillStoreError("hash-mismatch", `Skill ${label} file ${file.path} does not match its hash.`);
+    }
+    return { file, target: targets[index] as string };
+  });
 }
 
 async function exists(filePath: string): Promise<boolean> {
