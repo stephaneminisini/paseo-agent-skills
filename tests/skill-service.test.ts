@@ -352,3 +352,12 @@ describe("newSkillTemplate", () => {
     );
   });
 });
+
+describe("reading a skill at the file limit", () => {
+  it("opens a local skill with exactly 200 files", async () => {
+    const many = [...localFiles("full"), ...Array.from({ length: 199 }, (_, index) => ({ path: `f/${index}.txt`, content: "x" }))];
+    await localStore.save({ name: "full", files: many });
+    const result = await service(new FakeLangfuse([])).read({ kind: "local", name: "full" });
+    expect(result.files).toHaveLength(200);
+  });
+});

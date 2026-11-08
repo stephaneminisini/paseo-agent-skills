@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createDraftRegistry, draftKey } from "../shared/draft-registry";
+import { createDraftRegistry, deleteSkillKeepingDraftOnFailure, draftKey } from "../shared/draft-registry";
 import { openDraft, setContent } from "../shared/skill-draft";
 
 const FILES = [{ path: "SKILL.md", content: "---\nname: a\n---\n" }];
@@ -36,5 +36,39 @@ describe("createDraftRegistry", () => {
     const drafts = createDraftRegistry();
     drafts.put(draftKey("h1", "a"), openDraft("a", 1, FILES));
     expect(drafts.get(draftKey("h2", "a"))).toBeNull();
+  });
+});
+
+describe("review fixes", () => {
+  it("resumes only drafts with unsaved changes and drops clean ones", () => {
+    const drafts = createDraftRegistry();
+    const clean = draftKey("h", "clean");
+    const dirty = draftKey("h", "dirty");
+    drafts.put(clean, openDraft("clean", 1, FILES));
+    drafts.put(dirty, setContent(openDraft("dirty", 1, FILES), "SKILL.md", "x"));
+    expect(drafts.resume(clean)).toBeNull();
+    expect(drafts.get(clean)).toBeNull();
+    expect(drafts.resume(dirty)?.files[0]?.content).toBe("x");
+  });
+
+  it("reports whether one key has unsaved changes", () => {
+    const drafts = createDraftRegistry();
+    drafts.put(draftKey("h", "a"), setContent(openDraft("a", 1, FILES), "SKILL.md", "x"));
+    expect(drafts.isUnsaved(draftKey("h", "a"))).toBe(true);
+    expect(drafts.isUnsaved(draftKey("h", "b"))).toBe(false);
+  });
+
+  it("keeps the draft when deleting the skill fails", async () => {
+    const drafts = createDraftRegistry();
+    const key = draftKey("h", "a");
+    drafts.put(key, setContent(openDraft("a", 1, FILES), "SKILL.md", "x"));
+    await expect(
+      deleteSkillKeepingDraftOnFailure(key, drafts, async () => {
+        throw new Error("disk full");
+      }),
+    ).rejects.toThrow("disk full");
+    expect(drafts.get(key)).not.toBeNull();
+    await deleteSkillKeepingDraftOnFailure(key, drafts, async () => {});
+    expect(drafts.get(key)).toBeNull();
   });
 });

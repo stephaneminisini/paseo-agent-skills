@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import { isText, parseFrontmatter, type SkillText } from "./skill-folder";
+import { isText, MAX_SKILL_BYTES, MAX_SKILL_FILES, parseFrontmatter, SkillFolderError, type SkillText } from "./skill-folder";
 import { checkSkillPaths, LOCAL_MARKER_FILE, SkillStoreError, writeVersionFolder } from "./skill-store";
 
 export type SkillSource =
@@ -123,6 +123,13 @@ export function createLocalStore(options: { root: string; now?: () => Date }): L
       input.files.map((file) => file.path),
       input.name,
     );
+    const bytes = input.files.reduce((total, file) => total + Buffer.byteLength(file.content, "utf8"), 0);
+    if (input.files.length > MAX_SKILL_FILES || bytes > MAX_SKILL_BYTES) {
+      throw new SkillFolderError(
+        "too-large",
+        `Skill ${input.name} has more than ${MAX_SKILL_FILES} files or 2 MB; skills that large are not supported.`,
+      );
+    }
     for (const file of input.files) {
       if (!isText(Buffer.from(file.content, "utf8"))) {
         throw new SkillStoreError("non-text", `Skill ${input.name}: ${file.path} is not a text file.`);

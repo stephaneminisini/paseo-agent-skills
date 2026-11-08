@@ -42,7 +42,7 @@ export function SkillEditor({ name, hostId, theme, onClose }: SkillEditorProps) 
   const read = useRpc(readSkillRpc);
   const save = useRpc(saveSkillRpc);
   const queryClient = useQueryClient();
-  const [draft, setDraft] = useState<SkillDraft | null>(() => drafts.get(key));
+  const [draft, setDraft] = useState<SkillDraft | null>(() => drafts.resume(key));
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selected, setSelected] = useState<TreeNode | null>(null);
   const [prompt, setPrompt] = useState<Prompt | null>(null);
@@ -69,7 +69,7 @@ export function SkillEditor({ name, hostId, theme, onClose }: SkillEditorProps) 
   }
 
   useEffect(() => {
-    if (!drafts.get(key)) void load();
+    if (!drafts.resume(key)) void load();
     else setSelected({ name: "SKILL.md", path: "SKILL.md", kind: "file", children: [] });
     // Load once per skill; `load` reads the current props.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -168,21 +168,23 @@ export function SkillEditor({ name, hostId, theme, onClose }: SkillEditorProps) 
             onSelect={setSelected}
           />
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-            <ActionButton label="+ File" theme={theme} onPress={() => openPrompt({ kind: "file" }, "")} />
-            <ActionButton label="+ Folder" theme={theme} onPress={() => openPrompt({ kind: "folder" }, "")} />
+            <ActionButton label="+ File" theme={theme} disabled={saving} onPress={() => openPrompt({ kind: "file" }, "")} />
+            <ActionButton label="+ Folder" theme={theme} disabled={saving} onPress={() => openPrompt({ kind: "folder" }, "")} />
             <ActionButton
               label="Rename"
               theme={theme}
-              disabled={!selected}
+              disabled={!selected || saving}
               onPress={() => selected && openPrompt({ kind: "rename", from: selected.path }, selected.path)}
             />
-            <ActionButton label="Delete" theme={theme} disabled={!selected} onPress={() => setConfirm("delete")} />
+            <ActionButton label="Delete" theme={theme} disabled={!selected || saving} onPress={() => setConfirm("delete")} />
           </View>
         </View>
         <View style={{ flex: 1 }}>
           {file ? (
             <TextInput
               multiline
+              // Read-only while saving: the editor reloads from the saved version afterwards.
+              editable={!saving}
               value={file.content}
               onChangeText={(content) => update(setContent(draft, file.path, content))}
               autoCapitalize="none"

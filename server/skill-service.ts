@@ -77,10 +77,6 @@ async function mapLimited<T, R>(inputs: T[], limit: number, task: (input: T) => 
   return results;
 }
 
-function withoutFile(files: SkillText[], reserved: string): SkillText[] {
-  return files.filter((file) => file.path !== reserved);
-}
-
 function byName(a: string, b: string): number {
   return a.localeCompare(b, undefined, { sensitivity: "base" });
 }
@@ -284,8 +280,8 @@ export function createSkillService(deps: SkillServiceDeps): SkillService {
       if (ref.kind === "local") {
         const skill = await deps.localStore.get(ref.name);
         if (!skill) throw notFound();
-        const folder = await readSkillFolder(skill.dir);
-        return { name: skill.name, version: skill.version, files: withoutFile(folder.files, LOCAL_MARKER_FILE), error: null };
+        const folder = await readSkillFolder(skill.dir, { ignore: [LOCAL_MARKER_FILE] });
+        return { name: skill.name, version: skill.version, files: folder.files, error: null };
       }
       if (ref.kind === "langfuse") {
         const config = await deps.readConfig();

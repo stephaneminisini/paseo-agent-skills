@@ -5,7 +5,7 @@ import { Modal, ScrollView } from "@getpaseo/plugin/client/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
-import { draftKey } from "../shared/draft-registry";
+import { deleteSkillKeepingDraftOnFailure, draftKey } from "../shared/draft-registry";
 import {
   createSkillRpc,
   deleteSkillRpc,
@@ -81,6 +81,7 @@ export function SkillsScreen({ theme, layout, host }: PluginScreenProps) {
   const [newDialog, setNewDialog] = useState(false);
   const [newName, setNewName] = useState("");
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [reimportConfirm, setReimportConfirm] = useState<string | null>(null);
   const createSkill = useRpc(createSkillRpc);
   const deleteSkill = useRpc(deleteSkillRpc);
   const unsaved = new Set(drafts.unsaved());
@@ -179,7 +180,11 @@ export function SkillsScreen({ theme, layout, host }: PluginScreenProps) {
                       label="Re-import"
                       theme={theme}
                       disabled={busy}
-                      onPress={() => void run(() => reimport({ name: row.name }))}
+                      onPress={() =>
+                        drafts.isUnsaved(draftKey(host.id, row.name))
+                          ? setReimportConfirm(row.name)
+                          : void run(() => reimport({ name: row.name }))
+                      }
                     />
                   ) : null}
                   {editable && importable ? (
@@ -330,6 +335,20 @@ export function SkillsScreen({ theme, layout, host }: PluginScreenProps) {
           </Modal.Content>
         </Modal>
       ) : null}
+      {reimportConfirm ? (
+        <ConfirmModal
+          title="Unsaved changes"
+          message={`You have unsaved changes to ${reimportConfirm}. They stay as a draft until you discard them, but the draft is based on the version before this re-import.`}
+          confirmLabel="Re-import"
+          theme={theme}
+          onCancel={() => setReimportConfirm(null)}
+          onConfirm={() => {
+            const name = reimportConfirm;
+            setReimportConfirm(null);
+            void run(() => reimport({ name }));
+          }}
+        />
+      ) : null}
       {deleting ? (
         <ConfirmModal
           title="Delete local skill?"
@@ -341,10 +360,9 @@ export function SkillsScreen({ theme, layout, host }: PluginScreenProps) {
           onConfirm={() => {
             const name = deleting;
             setDeleting(null);
-            drafts.discard(draftKey(host.id, name));
             void (async () => {
               try {
-                await deleteSkill({ name });
+                await deleteSkillKeepingDraftOnFailure(draftKey(host.id, name), drafts, () => deleteSkill({ name }));
                 setNotice(`Deleted ${name}.`);
                 await queryClient.invalidateQueries({ queryKey: ["skills"] });
               } catch (caught) {

@@ -82,7 +82,8 @@ function errorCode(error: unknown): string | undefined {
  *   "too-large" above MAX_SKILL_FILES or MAX_SKILL_BYTES, "non-text" for a file that is not
  *   text, "no-skill-md" without a root SKILL.md, "no-name" when its frontmatter has no name.
  */
-export async function readSkillFolder(dir: string): Promise<SkillFolder> {
+export async function readSkillFolder(dir: string, options: { ignore?: string[] } = {}): Promise<SkillFolder> {
+  const ignore = new Set(options.ignore ?? []);
   const tooLarge = () =>
     new SkillFolderError(
       "too-large",
@@ -124,6 +125,7 @@ export async function readSkillFolder(dir: string): Promise<SkillFolder> {
         }
         await walk(childAbsolute, childRelative, new Set([...ancestors, real]));
       } else if (info.isFile()) {
+        if (relative === "" && ignore.has(entry)) continue;
         found.push({ relative: childRelative, absolute: childAbsolute });
         bytes += info.size;
         if (found.length > MAX_SKILL_FILES || bytes > MAX_SKILL_BYTES) throw tooLarge();
