@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { access, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { SkillFile, SkillVersion } from "./langfuse";
+import type { SkillText } from "./skill-folder";
 
 export type SkillStoreErrorKind =
   | "unsafe-name"
@@ -27,6 +28,9 @@ export class SkillStoreError extends Error {
 
 /** Written last into a version folder; its presence marks the folder complete. */
 export const MANIFEST_FILE = ".langfuse-skill.json";
+/** Written last into a local version folder; its presence marks the folder complete. */
+export const LOCAL_MARKER_FILE = ".agent-skill.json";
+const RESERVED_FILES = new Set([MANIFEST_FILE, LOCAL_MARKER_FILE]);
 
 export interface StoreMeta {
   baseUrl: string;
@@ -61,7 +65,7 @@ function checkFilePath(dir: string, filePath: string): string {
     new SkillStoreError("unsafe-path", `Skill file path ${JSON.stringify(filePath)} is not allowed.`);
   if (filePath.length === 0 || /^[/\\]/.test(filePath) || /^[A-Za-z]:/.test(filePath)) throw unsafe();
   const segments = filePath.split(/[/\\]/);
-  if (segments.some(isUnsafeSegment) || filePath === MANIFEST_FILE) throw unsafe();
+  if (segments.some(isUnsafeSegment) || RESERVED_FILES.has(filePath)) throw unsafe();
   const target = path.resolve(dir, ...segments);
   if (!target.startsWith(dir + path.sep)) throw unsafe();
   return target;
@@ -183,29 +187,52 @@ async function store(
       `Asked Langfuse for ${ref.name} v${ref.version} but received ${skill.name} v${skill.version}.`,
     );
   }
+  plan(dir, skill);
+  const manifest = {
+    name: skill.name,
+    version: skill.version,
+    baseUrl: meta.baseUrl,
+    fetchedAt: (meta.now?.() ?? new Date()).toISOString(),
+    files: skill.files.map(({ path: filePath, sha256Hash }) => ({ path: filePath, sha256Hash })),
+  };
+  const downloaded = await writeVersionFolder(dir, skill.files, {
+    file: MANIFEST_FILE,
+    content: `${JSON.stringify(manifest, null, 2)}\n`,
+  });
+  return { dir, downloaded };
+}
+
+/**
+ * Writes `files` plus the completion marker `extra` into a temporary sibling of `dir`, then
+ * renames it into place. Returns false when another writer completed `dir` first. Paths must
+ * already be checked with {@link checkSkillPaths}.
+ *
+ * @throws {SkillStoreError} kind "write-failed" when writing or moving fails.
+ */
+export async function writeVersionFolder(
+  dir: string,
+  files: SkillText[],
+  extra: { file: string; content: string },
+): Promise<boolean> {
+  const markerPath = path.join(dir, extra.file);
+  if (await exists(markerPath)) return false;
   const tmpDir = `${dir}.tmp-${randomUUID()}`;
-  const entries = plan(tmpDir, skill);
   try {
     try {
-      for (const { file, target } of entries) {
+      for (const file of files) {
+        const target = path.join(tmpDir, ...file.path.split("/"));
         await mkdir(path.dirname(target), { recursive: true });
         await writeFile(target, file.content, "utf8");
       }
-      const manifest = {
-        name: skill.name,
-        version: skill.version,
-        baseUrl: meta.baseUrl,
-        fetchedAt: (meta.now?.() ?? new Date()).toISOString(),
-        files: skill.files.map(({ path: filePath, sha256Hash }) => ({ path: filePath, sha256Hash })),
-      };
-      await writeFile(path.join(tmpDir, MANIFEST_FILE), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+      await mkdir(tmpDir, { recursive: true });
+      await writeFile(path.join(tmpDir, extra.file), extra.content, "utf8");
     } catch (error) {
       throw new SkillStoreError(
         "write-failed",
-        `Could not store skill ${skill.name} v${skill.version}: ${error instanceof Error ? error.message : String(error)}`,
+        `Could not store skill in ${dir}: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-    return { dir, downloaded: await moveIntoPlace(tmpDir, dir, manifestPath) };
+    return await moveIntoPlace(tmpDir, dir, markerPath);
   } finally {
     await rm(tmpDir, { recursive: true, force: true });
   }
