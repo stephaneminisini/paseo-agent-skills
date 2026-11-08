@@ -154,3 +154,22 @@ describe("review fixes", () => {
     expect(await readFile(path.join(saved.dir, "SKILL.md"), "utf8")).toContain("# NEW");
   });
 });
+
+describe("remove", () => {
+  it("drops the record and keeps version folders", async () => {
+    const store = createLocalStore({ root, now: NOW });
+    const first = await store.save({ name: "cut-release", files: files("cut-release") });
+    const before = await readFile(path.join(first.dir, "SKILL.md"), "utf8");
+    await store.remove("cut-release");
+    expect(await store.get("cut-release")).toBeNull();
+    expect(await store.list()).toEqual([]);
+    expect(await readFile(path.join(first.dir, "SKILL.md"), "utf8")).toBe(before);
+    const again = await store.save({ name: "cut-release", files: files("cut-release", "# new\n") });
+    expect(again.version).toBe(2);
+    expect(await readFile(path.join(first.dir, "SKILL.md"), "utf8")).toBe(before);
+  });
+
+  it("ignores an unknown name", async () => {
+    await createLocalStore({ root }).remove("nope");
+  });
+});

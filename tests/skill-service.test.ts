@@ -7,7 +7,7 @@ import type { LangfuseClient, SkillFile, SkillRef, SkillSummary, SkillVersion } 
 import { createLocalStore, type LocalStore } from "../server/local-store";
 import { createSkillService } from "../server/skill-service";
 import { ConfigSchema } from "../shared/settings";
-import { attachmentText } from "../shared/skills";
+import { attachmentText, newSkillTemplate } from "../shared/skills";
 
 function file(filePath: string, content: string, contentType = "text/plain"): SkillFile {
   return {
@@ -278,5 +278,77 @@ describe("importPath replace confirmation", () => {
     expect(await skills.importPath(dir)).toEqual({ name: "pr-review", version: 1, needsConfirm: true });
     expect((await localStore.get("pr-review"))?.version).toBe(1);
     expect(await skills.importPath(dir, true)).toEqual({ name: "pr-review", version: 2, needsConfirm: false });
+  });
+});
+
+describe("read, save, create, remove", () => {
+  it("reads a local skill without the marker", async () => {
+    await localStore.save({ name: "pr-review", files: localFiles("pr-review") });
+    const result = await service(new FakeLangfuse([])).read({ kind: "local", name: "pr-review" });
+    expect(result).toEqual({ name: "pr-review", version: 1, files: localFiles("pr-review"), error: null });
+  });
+
+  it("reads the labeled Langfuse version without the manifest", async () => {
+    const result = await service(new FakeLangfuse([CUT_RELEASE])).read({ kind: "langfuse", name: "cut-release" });
+    expect(result.version).toBe(2);
+    expect(result.files.map((file) => file.path).sort()).toEqual(["SKILL.md", "bundle-migrations.sh"]);
+    expect(result.error).toBeNull();
+  });
+
+  it("reads a found skill and reports a not-importable one", async () => {
+    const good = path.join(home, ".claude/skills/good");
+    await mkdir(good, { recursive: true });
+    await writeFile(path.join(good, "SKILL.md"), localFiles("good")[0]?.content ?? "");
+    const bad = path.join(home, ".claude/skills/bad");
+    await mkdir(bad, { recursive: true });
+    await writeFile(path.join(bad, "SKILL.md"), localFiles("bad")[0]?.content ?? "");
+    await writeFile(path.join(bad, "logo.png"), Buffer.from([0x89, 0x00]));
+    const skills = service(new FakeLangfuse([]));
+    const rows = (await skills.list({})).rows;
+    const goodId = rows.find((row) => row.name === "good")?.found[0]?.id ?? "";
+    const badId = rows.find((row) => row.name === "bad")?.found[0]?.id ?? "";
+    expect((await skills.read({ kind: "found", id: goodId })).files).toHaveLength(1);
+    const blocked = await skills.read({ kind: "found", id: badId });
+    expect(blocked.files).toEqual([]);
+    expect(blocked.error).toContain("logo.png");
+  });
+
+  it("rejects an unknown local skill", async () => {
+    await expect(service(new FakeLangfuse([])).read({ kind: "local", name: "nope" })).rejects.toThrow(
+      "Skill not found; refresh the list.",
+    );
+  });
+
+  it("saves the next version and refuses stale or invalid saves", async () => {
+    await localStore.save({ name: "pr-review", files: localFiles("pr-review") });
+    const skills = service(new FakeLangfuse([]));
+    expect(await skills.save("pr-review", localFiles("pr-review", "Changed"), 1)).toEqual({ name: "pr-review", version: 2 });
+    await expect(skills.save("pr-review", localFiles("pr-review"), 1)).rejects.toThrow("This skill was changed elsewhere; reload.");
+    await expect(skills.save("pr-review", [{ path: "notes.md", content: "x" }], 2)).rejects.toThrow("has no SKILL.md");
+    await expect(skills.save("pr-review", localFiles("other"), 2)).rejects.toThrow("Renaming means creating a new skill.");
+  });
+
+  it("creates a skill from the template", async () => {
+    const skills = service(new FakeLangfuse([]));
+    expect(await skills.create("  pr-review ")).toEqual({ name: "pr-review", version: 1 });
+    const read = await skills.read({ kind: "local", name: "pr-review" });
+    expect(read.files).toEqual([{ path: "SKILL.md", content: newSkillTemplate("pr-review") }]);
+    await expect(skills.create("pr-review")).rejects.toThrow("A local skill named pr-review already exists.");
+    await expect(skills.create(" ")).rejects.toThrow("Enter a skill name.");
+  });
+
+  it("removes a local skill", async () => {
+    const skills = service(new FakeLangfuse([]));
+    await skills.create("pr-review");
+    await skills.remove("pr-review");
+    expect(await localStore.get("pr-review")).toBeNull();
+  });
+});
+
+describe("newSkillTemplate", () => {
+  it("is the exact template", () => {
+    expect(newSkillTemplate("x")).toBe(
+      "---\nname: x\ndescription: Describe when an agent should use this skill.\n---\n\n# x\n\nInstructions for the agent.\n",
+    );
   });
 });
