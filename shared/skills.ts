@@ -22,10 +22,50 @@ export const skillsSource = defineAttachmentSource({
   search: searchSkillsRpc,
 });
 
+export const SkillRowSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  local: z
+    .object({
+      version: z.number(),
+      sourceStatus: z.enum(["unchanged", "updated", "missing"]).nullable(),
+      sourceLabel: z.string().nullable(),
+    })
+    .nullable(),
+  langfuse: z.object({ latestVersion: z.number(), labeledVersion: z.number().nullable() }).nullable(),
+  found: z.array(
+    z.object({ id: z.string(), label: z.string(), importable: z.boolean(), reason: z.string().nullable() }),
+  ),
+});
+export type SkillRow = z.infer<typeof SkillRowSchema>;
+
+const ImportedSchema = z.object({ name: z.string(), version: z.number() });
+
+export const listSkillsRpc = defineRpc({
+  name: "skills.list",
+  input: z.object({ fresh: z.boolean().optional() }),
+  output: z.object({ rows: z.array(SkillRowSchema), langfuseError: z.string().nullable() }),
+});
+export const importPathRpc = defineRpc({
+  name: "skills.import.path",
+  input: z.object({ path: z.string() }),
+  output: ImportedSchema,
+});
+export const importFoundRpc = defineRpc({
+  name: "skills.import.found",
+  input: z.object({ id: z.string() }),
+  output: ImportedSchema,
+});
+export const reimportRpc = defineRpc({
+  name: "skills.reimport",
+  input: z.object({ name: z.string() }),
+  output: ImportedSchema,
+});
+
 /** The note sent to the agent: where the skill's files are and how to use them. */
-export function attachmentText(name: string, version: number, dir: string): string {
+export function attachmentText(name: string, origin: "Langfuse" | "local", version: number, dir: string): string {
   return [
-    `Use the skill "${name}" (Langfuse version ${version}).`,
+    `Use the skill "${name}" (${origin} version ${version}).`,
     `Its files are in ${dir}. Read ${dir}/SKILL.md now and follow it for this task.`,
     `Where SKILL.md writes <skill-dir>, use ${dir}.`,
   ].join("\n");
