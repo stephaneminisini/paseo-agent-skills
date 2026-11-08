@@ -6,6 +6,7 @@ import { attachmentText, type SkillRow } from "../shared/skills";
 import { type FoundSkill, scanFound } from "./found";
 import { importFound, importFromPath, reimport, sourceStatus } from "./importer";
 import type { LocalSkill, LocalStore } from "./local-store";
+import { readSkillFolder } from "./skill-folder";
 import type { LangfuseKeys } from "./key-file";
 import { type LangfuseClient, LangfuseError, type SkillRef, type SkillSummary } from "./langfuse";
 import { ensureSkillVersion, SkillStoreError } from "./skill-store";
@@ -44,7 +45,7 @@ export interface SkillList {
 export interface SkillService {
   search(query: string): Promise<PluginAttachmentSearchPayload>;
   list(options: { fresh?: boolean }): Promise<SkillList>;
-  importPath(path: string): Promise<{ name: string; version: number }>;
+  importPath(path: string, replace?: boolean): Promise<{ name: string; version: number; needsConfirm: boolean }>;
   importFound(id: string): Promise<{ name: string; version: number }>;
   reimport(name: string): Promise<{ name: string; version: number }>;
   testLangfuse(): Promise<{ projectName: string }>;
@@ -243,12 +244,17 @@ export function createSkillService(deps: SkillServiceDeps): SkillService {
       }
       return { rows: [...rows.values()].sort((a, b) => byName(a.name, b.name)), langfuseError };
     },
-    async importPath(folder) {
+    async importPath(folder, replace = false) {
       const trimmed = folder.trim();
       const expanded =
         trimmed === "~" ? deps.home : trimmed.startsWith("~/") ? path.join(deps.home, trimmed.slice(2)) : trimmed;
+      if (!replace) {
+        const { name } = await readSkillFolder(expanded);
+        const existing = await deps.localStore.get(name);
+        if (existing) return { name, version: existing.version, needsConfirm: true };
+      }
       const skill = await importFromPath(deps.localStore, expanded, deps.home);
-      return { name: skill.name, version: skill.version };
+      return { name: skill.name, version: skill.version, needsConfirm: false };
     },
     async importFound(id) {
       const skill = await importFound(deps.localStore, deps.home, id);

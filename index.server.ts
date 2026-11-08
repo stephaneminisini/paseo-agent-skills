@@ -36,7 +36,7 @@ export default function contribute(server: PluginServerContext) {
   server.handle(searchSkillsRpc, ({ query }) => service.search(query));
   server.handle(testLangfuseRpc, () => service.testLangfuse());
   server.handle(listSkillsRpc, ({ fresh }) => service.list({ fresh }));
-  server.handle(importPathRpc, ({ path: folder }) => service.importPath(folder));
+  server.handle(importPathRpc, ({ path: folder, replace }) => service.importPath(folder, replace));
   server.handle(importFoundRpc, ({ id }) => service.importFound(id));
   server.handle(reimportRpc, ({ name }) => service.reimport(name));
   return () => {};

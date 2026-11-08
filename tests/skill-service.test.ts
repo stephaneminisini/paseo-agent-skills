@@ -263,6 +263,20 @@ describe("createSkillService.importPath", () => {
     expect(await service(new FakeLangfuse([])).importPath("~/my-skills/pr-review")).toEqual({
       name: "pr-review",
       version: 1,
+      needsConfirm: false,
     });
+  });
+});
+
+describe("importPath replace confirmation", () => {
+  it("asks before replacing an existing local skill", async () => {
+    await localStore.save({ name: "pr-review", files: localFiles("pr-review") });
+    const dir = path.join(home, "pr-review");
+    await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, "SKILL.md"), localFiles("pr-review", "Changed")[0]?.content ?? "");
+    const skills = service(new FakeLangfuse([]));
+    expect(await skills.importPath(dir)).toEqual({ name: "pr-review", version: 1, needsConfirm: true });
+    expect((await localStore.get("pr-review"))?.version).toBe(1);
+    expect(await skills.importPath(dir, true)).toEqual({ name: "pr-review", version: 2, needsConfirm: false });
   });
 });

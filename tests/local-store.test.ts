@@ -134,3 +134,23 @@ describe("createLocalStore", () => {
     expect(await createLocalStore({ root }).get("nope")).toBeNull();
   });
 });
+
+describe("review fixes", () => {
+  it.each([".", ".."])("refuses the skill name %j", async (name) => {
+    const store = createLocalStore({ root: path.join(root, "local"), now: NOW });
+    expect(await kind(store.save({ name, files: files(name) }))).toBe("unsafe-name");
+    expect(await readdir(root)).toEqual([]);
+  });
+
+  it("skips a version folder left complete by an interrupted save", async () => {
+    const store = createLocalStore({ root, now: NOW });
+    await store.save({ name: "cut-release", files: files("cut-release") });
+    const stale = path.join(root, "cut-release", "v2");
+    await mkdir(stale, { recursive: true });
+    await writeFile(path.join(stale, "SKILL.md"), "STALE");
+    await writeFile(path.join(stale, ".agent-skill.json"), "{}");
+    const saved = await store.save({ name: "cut-release", files: files("cut-release", "# NEW\n") });
+    expect(saved.version).toBe(3);
+    expect(await readFile(path.join(saved.dir, "SKILL.md"), "utf8")).toContain("# NEW");
+  });
+});

@@ -79,7 +79,7 @@ export function createLocalStore(options: { root: string; now?: () => Date }): L
   const queues = new Map<string, Promise<unknown>>();
 
   function skillDir(name: string): string {
-    if (name.length === 0 || name.includes("\0")) {
+    if (name.length === 0 || name === "." || name === ".." || name.includes("\0")) {
       throw new LocalStoreError("unsafe-name", `Skill name ${JSON.stringify(name)} is not allowed.`);
     }
     return path.join(root, encodeURIComponent(name));
@@ -140,17 +140,22 @@ export function createLocalStore(options: { root: string; now?: () => Date }): L
   async function saveNow(input: SaveInput): Promise<LocalSkill> {
     const folder = skillDir(input.name);
     const current = await readRecord(folder);
-    const version = (current?.version ?? 0) + 1;
-    const versionFolder = path.join(folder, `v${version}`);
-    const description = validate(input, versionFolder);
+    let version = (current?.version ?? 0) + 1;
+    const description = validate(input, path.join(folder, `v${version}`));
     if (input.expectedVersion !== undefined && input.expectedVersion !== (current?.version ?? 0)) {
       throw new LocalStoreError("changed-elsewhere", "This skill was changed elsewhere; reload.");
     }
     await mkdir(folder, { recursive: true });
-    await writeVersionFolder(versionFolder, input.files, {
-      file: LOCAL_MARKER_FILE,
-      content: `${JSON.stringify({ name: input.name, version }, null, 2)}\n`,
-    });
+    // A complete folder for this version can exist when an earlier save stopped before updating
+    // the record, or another process saved it; never reuse it, take the next number instead.
+    while (
+      !(await writeVersionFolder(path.join(folder, `v${version}`), input.files, {
+        file: LOCAL_MARKER_FILE,
+        content: `${JSON.stringify({ name: input.name, version }, null, 2)}\n`,
+      }))
+    ) {
+      version += 1;
+    }
     const record: SkillRecord = {
       name: input.name,
       description,

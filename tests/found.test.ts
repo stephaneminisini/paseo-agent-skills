@@ -132,3 +132,11 @@ describe("import and source status", () => {
     expect(await sourceStatus(home, skill)).toBeNull();
   });
 });
+
+describe("review fixes", () => {
+  it("ignores a malformed installed_plugins.json", async () => {
+    await put(".claude/skills/cut-release/SKILL.md", skillMd("cut-release"));
+    await put(".claude/plugins/installed_plugins.json", '{"version": 2, "plugins": {');
+    expect((await scanFound(home)).map((skill) => skill.name)).toEqual(["cut-release"]);
+  });
+});

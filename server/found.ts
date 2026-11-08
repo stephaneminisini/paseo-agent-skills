@@ -78,7 +78,16 @@ export async function installedPlugins(home: string): Promise<InstalledPlugin[]>
   } catch {
     return [];
   }
-  const parsed = InstalledSchema.safeParse(JSON.parse(raw));
+  let json: unknown;
+  try {
+    json = JSON.parse(raw);
+  } catch (error) {
+    console.error("[agent-skills] Unreadable installed_plugins.json", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return [];
+  }
+  const parsed = InstalledSchema.safeParse(json);
   if (!parsed.success) {
     console.error("[agent-skills] Unreadable installed_plugins.json", { issues: parsed.error.issues });
     return [];

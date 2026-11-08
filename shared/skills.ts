@@ -48,8 +48,9 @@ export const listSkillsRpc = defineRpc({
 });
 export const importPathRpc = defineRpc({
   name: "skills.import.path",
-  input: z.object({ path: z.string() }),
-  output: ImportedSchema,
+  input: z.object({ path: z.string(), replace: z.boolean().optional() }),
+  /** needsConfirm: a local skill of that name exists (name/version are the existing one); nothing was imported. */
+  output: ImportedSchema.extend({ needsConfirm: z.boolean() }),
 });
 export const importFoundRpc = defineRpc({
   name: "skills.import.found",

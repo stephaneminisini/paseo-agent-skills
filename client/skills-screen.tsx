@@ -17,7 +17,7 @@ const FILTERS: ReadonlyArray<{ id: SkillFilter; label: string }> = [
 ];
 
 type PendingImport =
-  | { kind: "path"; path: string; label: string }
+  | { kind: "path"; path: string; label: string; replace?: boolean }
   | { kind: "found"; id: string; label: string };
 
 function BadgeChip({ badge, theme }: { badge: Badge; theme: PluginTheme }) {
@@ -70,12 +70,18 @@ export function SkillsScreen({ theme, layout }: PluginScreenProps) {
   const muted = { color: colors.foregroundMuted };
   const rows = query.data?.rows ?? [];
 
-  async function run(action: () => Promise<{ name: string; version: number }>) {
+  async function run(action: () => Promise<{ name: string; version: number; needsConfirm?: boolean }>, pending?: PendingImport) {
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
       const result = await action();
+      if (result.needsConfirm && pending) {
+        if (pending.kind === "path") {
+          setConfirm({ name: result.name, version: result.version, pending: { ...pending, replace: true } });
+        }
+        return;
+      }
       setNotice(`Imported ${result.name} as local v${result.version}.`);
       await queryClient.invalidateQueries({ queryKey: ["skills"] });
     } catch (caught) {
@@ -86,7 +92,13 @@ export function SkillsScreen({ theme, layout }: PluginScreenProps) {
   }
 
   function execute(pending: PendingImport) {
-    void run(() => (pending.kind === "path" ? importPath({ path: pending.path }) : importFound({ id: pending.id })));
+    void run(
+      () =>
+        pending.kind === "path"
+          ? importPath({ path: pending.path, replace: pending.replace ?? false })
+          : importFound({ id: pending.id }),
+      pending,
+    );
   }
 
   /** Imports, asking first when the name already has a local skill. */
