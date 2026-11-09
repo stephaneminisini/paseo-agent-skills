@@ -5,9 +5,23 @@ import { Modal, ScrollView } from "@getpaseo/plugin/client/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
-import { importFoundRpc, importPathRpc, listSkillsRpc, reimportRpc, type SkillRow } from "../shared/skills";
+import { deleteSkillKeepingDraftOnFailure, draftKey } from "../shared/draft-registry";
+import {
+  createSkillRpc,
+  deleteSkillRpc,
+  importFoundRpc,
+  importPathRpc,
+  listSkillsRpc,
+  reimportRpc,
+  type SkillRefInput,
+  type SkillRow,
+} from "../shared/skills";
 import { type Badge, filterRows, rowBadges, type SkillFilter } from "../shared/skills-view";
 import { ActionButton } from "./action-button";
+import { ConfirmModal } from "./confirm-modal";
+import { drafts } from "./drafts";
+import { SkillEditor } from "./skill-editor";
+import { SkillViewer } from "./skill-viewer";
 
 const FILTERS: ReadonlyArray<{ id: SkillFilter; label: string }> = [
   { id: "all", label: "All" },
@@ -15,6 +29,8 @@ const FILTERS: ReadonlyArray<{ id: SkillFilter; label: string }> = [
   { id: "langfuse", label: "Langfuse" },
   { id: "found", label: "Found" },
 ];
+
+type Opened = { mode: "editor"; name: string } | { mode: "viewer"; ref: SkillRefInput };
 
 type PendingImport =
   | { kind: "path"; path: string; label: string; replace?: boolean }
@@ -48,7 +64,7 @@ function details(row: SkillRow): string[] {
 }
 
 /** Skills screen: every skill on this host and in Langfuse, with import actions. */
-export function SkillsScreen({ theme, layout }: PluginScreenProps) {
+export function SkillsScreen({ theme, layout, host }: PluginScreenProps) {
   const { colors } = theme;
   const listSkills = useRpc(listSkillsRpc);
   const importPath = useRpc(importPathRpc);
@@ -61,6 +77,14 @@ export function SkillsScreen({ theme, layout }: PluginScreenProps) {
   const [pathDraft, setPathDraft] = useState("");
   const [confirm, setConfirm] = useState<{ name: string; version: number; pending: PendingImport } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [opened, setOpened] = useState<Opened | null>(null);
+  const [newDialog, setNewDialog] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const [reimportConfirm, setReimportConfirm] = useState<string | null>(null);
+  const createSkill = useRpc(createSkillRpc);
+  const deleteSkill = useRpc(deleteSkillRpc);
+  const unsaved = new Set(drafts.unsaved());
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -133,8 +157,10 @@ export function SkillsScreen({ theme, layout }: PluginScreenProps) {
           {visible.map((row) => {
             const importable = row.found.find((entry) => entry.importable);
             return (
-              <View
+              <Pressable
                 key={row.name}
+                accessibilityRole="button"
+                onPress={() => openRow(row)}
                 style={{ paddingVertical: 10, borderBottomWidth: 1, borderColor: colors.border, gap: 4 }}
               >
                 <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
@@ -142,13 +168,23 @@ export function SkillsScreen({ theme, layout }: PluginScreenProps) {
                   {rowBadges(row).map((badge) => (
                     <BadgeChip key={badge.label} badge={badge} theme={theme} />
                   ))}
+                  {unsaved.has(draftKey(host.id, row.name)) ? (
+                    <BadgeChip badge={{ label: "Unsaved", tone: "warning" }} theme={theme} />
+                  ) : null}
                   <View style={{ flex: 1 }} />
+                  {editable && row.local ? (
+                    <ActionButton label="Delete" theme={theme} disabled={busy} onPress={() => setDeleting(row.name)} />
+                  ) : null}
                   {editable && row.local?.sourceStatus === "updated" ? (
                     <ActionButton
                       label="Re-import"
                       theme={theme}
                       disabled={busy}
-                      onPress={() => void run(() => reimport({ name: row.name }))}
+                      onPress={() =>
+                        drafts.isUnsaved(draftKey(host.id, row.name))
+                          ? setReimportConfirm(row.name)
+                          : void run(() => reimport({ name: row.name }))
+                      }
                     />
                   ) : null}
                   {editable && importable ? (
@@ -172,11 +208,64 @@ export function SkillsScreen({ theme, layout }: PluginScreenProps) {
                     {line}
                   </Text>
                 ))}
-              </View>
+              </Pressable>
             );
           })}
         </View>
       );
+  }
+
+  function openRow(row: SkillRow) {
+    if (row.local && editable) {
+      setOpened({ mode: "editor", name: row.name });
+      return;
+    }
+    const first = row.found[0];
+    const ref: SkillRefInput | null = row.local
+      ? { kind: "local", name: row.name }
+      : row.langfuse
+        ? { kind: "langfuse", name: row.name }
+        : first
+          ? { kind: "found", id: first.id }
+          : null;
+    if (ref) setOpened({ mode: "viewer", ref });
+  }
+
+  async function onCreate() {
+    setBusy(true);
+    setError(null);
+    try {
+      const created = await createSkill({ name: newName });
+      setNewDialog(false);
+      setNewName("");
+      await queryClient.invalidateQueries({ queryKey: ["skills"] });
+      setOpened({ mode: "editor", name: created.name });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+      setNewDialog(false);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (opened) {
+    return (
+      <ScrollView style={{ flex: 1, backgroundColor: colors.surface0 }} contentContainerStyle={{ padding, gap: 16 }}>
+        {opened.mode === "editor" ? (
+          <SkillEditor
+            name={opened.name}
+            hostId={host.id}
+            theme={theme}
+            onClose={(saved) => {
+              setOpened(null);
+              if (saved) void query.refetch();
+            }}
+          />
+        ) : (
+          <SkillViewer skillRef={opened.ref} theme={theme} compact={layout.compact} onClose={() => setOpened(null)} />
+        )}
+      </ScrollView>
+    );
   }
 
   return (
@@ -185,6 +274,7 @@ export function SkillsScreen({ theme, layout }: PluginScreenProps) {
         <Text style={{ ...text, fontSize: 18, fontWeight: "600" }}>Skills</Text>
         <View style={{ flex: 1 }} />
         <ActionButton label="Refresh" theme={theme} onPress={() => void query.refetch()} />
+        {editable ? <ActionButton label="New skill" theme={theme} onPress={() => setNewDialog(true)} /> : null}
         {editable ? (
           <ActionButton label="Import…" variant="primary" theme={theme} onPress={() => setPathDialog(true)} />
         ) : null}
@@ -219,6 +309,69 @@ export function SkillsScreen({ theme, layout }: PluginScreenProps) {
         </Text>
       ) : null}
       {body}
+      {newDialog ? (
+        <Modal title="New skill" open onOpenChange={(open) => !open && setNewDialog(false)}>
+          <Modal.Content>
+            <Text style={muted}>The name goes into SKILL.md and cannot be changed later.</Text>
+            <TextInput
+              value={newName}
+              onChangeText={setNewName}
+              placeholder="pr-review"
+              placeholderTextColor={colors.foregroundMuted}
+              autoCapitalize="none"
+              autoCorrect={false}
+              style={{ color: colors.foreground, backgroundColor: colors.surface2, borderRadius: 8, padding: 10 }}
+            />
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              <ActionButton
+                label="Create"
+                variant="primary"
+                theme={theme}
+                disabled={busy || newName.trim().length === 0}
+                onPress={() => void onCreate()}
+              />
+              <ActionButton label="Cancel" theme={theme} onPress={() => setNewDialog(false)} />
+            </View>
+          </Modal.Content>
+        </Modal>
+      ) : null}
+      {reimportConfirm ? (
+        <ConfirmModal
+          title="Unsaved changes"
+          message={`You have unsaved changes to ${reimportConfirm}. They stay as a draft until you discard them, but the draft is based on the version before this re-import.`}
+          confirmLabel="Re-import"
+          theme={theme}
+          onCancel={() => setReimportConfirm(null)}
+          onConfirm={() => {
+            const name = reimportConfirm;
+            setReimportConfirm(null);
+            void run(() => reimport({ name }));
+          }}
+        />
+      ) : null}
+      {deleting ? (
+        <ConfirmModal
+          title="Delete local skill?"
+          message={`Delete local skill ${deleting}? Agents already using it keep their copy.`}
+          confirmLabel="Delete"
+          danger
+          theme={theme}
+          onCancel={() => setDeleting(null)}
+          onConfirm={() => {
+            const name = deleting;
+            setDeleting(null);
+            void (async () => {
+              try {
+                await deleteSkillKeepingDraftOnFailure(draftKey(host.id, name), drafts, () => deleteSkill({ name }));
+                setNotice(`Deleted ${name}.`);
+                await queryClient.invalidateQueries({ queryKey: ["skills"] });
+              } catch (caught) {
+                setError(caught instanceof Error ? caught.message : String(caught));
+              }
+            })();
+          }}
+        />
+      ) : null}
       {pathDialog ? (
         <Modal title="Import skill folder" open onOpenChange={(open) => !open && setPathDialog(false)}>
           <Modal.Content>

@@ -1,15 +1,22 @@
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { PluginAttachmentItem, PluginAttachmentSearchPayload } from "@getpaseo/plugin";
 import type { Config } from "../shared/settings";
-import { attachmentText, type SkillRow } from "../shared/skills";
+import {
+  attachmentText,
+  newSkillTemplate,
+  type ReadSkillResult,
+  type SkillRefInput,
+  type SkillRow,
+} from "../shared/skills";
 import { type FoundSkill, scanFound } from "./found";
 import { importFound, importFromPath, reimport, sourceStatus } from "./importer";
 import type { LocalSkill, LocalStore } from "./local-store";
-import { readSkillFolder } from "./skill-folder";
+import { readSkillFolder, SkillFolderError, type SkillText } from "./skill-folder";
 import type { LangfuseKeys } from "./key-file";
 import { type LangfuseClient, LangfuseError, type SkillRef, type SkillSummary } from "./langfuse";
-import { ensureSkillVersion, SkillStoreError } from "./skill-store";
+import { ensureSkillVersion, LOCAL_MARKER_FILE, MANIFEST_FILE, SkillStoreError } from "./skill-store";
 
 const MAX_SEARCH_RESULTS = 20;
 const RESOLVE_CONCURRENCY = 5;
@@ -49,6 +56,10 @@ export interface SkillService {
   importFound(id: string): Promise<{ name: string; version: number }>;
   reimport(name: string): Promise<{ name: string; version: number }>;
   testLangfuse(): Promise<{ projectName: string }>;
+  read(ref: SkillRefInput): Promise<ReadSkillResult>;
+  save(name: string, files: SkillText[], expectedVersion: number): Promise<{ name: string; version: number }>;
+  create(name: string): Promise<{ name: string; version: number }>;
+  remove(name: string): Promise<void>;
 }
 
 /** Runs `task` over `inputs` with at most `limit` in flight, keeping input order. */
@@ -263,6 +274,64 @@ export function createSkillService(deps: SkillServiceDeps): SkillService {
     async reimport(name) {
       const skill = await reimport(deps.localStore, deps.home, name);
       return { name: skill.name, version: skill.version };
+    },
+    async read(ref) {
+      const notFound = () => new Error("Skill not found; refresh the list.");
+      if (ref.kind === "local") {
+        const skill = await deps.localStore.get(ref.name);
+        if (!skill) throw notFound();
+        const folder = await readSkillFolder(skill.dir, { ignore: [LOCAL_MARKER_FILE] });
+        return { name: skill.name, version: skill.version, files: folder.files, error: null };
+      }
+      if (ref.kind === "langfuse") {
+        const config = await deps.readConfig();
+        const client = await clientFor(config);
+        const skillRef = (await client.resolveSkill(ref.name, config.label)) ?? (await client.resolveSkill(ref.name, "latest"));
+        if (!skillRef) throw notFound();
+        const { dir } = await ensureSkillVersion(
+          deps.storeRoot,
+          skillRef,
+          () => client.getSkillVersion(skillRef.name, skillRef.version),
+          { baseUrl: config.baseUrl },
+        );
+        // Read by the manifest's file list: Langfuse skills need not match local frontmatter rules.
+        const manifest = JSON.parse(await readFile(path.join(dir, MANIFEST_FILE), "utf8")) as { files: Array<{ path: string }> };
+        const files = await Promise.all(
+          manifest.files.map(async (file) => ({
+            path: file.path,
+            content: await readFile(path.join(dir, ...file.path.split("/")), "utf8"),
+          })),
+        );
+        return { name: skillRef.name, version: skillRef.version, files, error: null };
+      }
+      const found = (await scanFound(deps.home)).find((skill) => skill.id === ref.id);
+      if (!found) throw notFound();
+      try {
+        const folder = await readSkillFolder(found.dir);
+        return { name: folder.name, version: null, files: folder.files, error: null };
+      } catch (error) {
+        if (!(error instanceof SkillFolderError)) throw error;
+        return { name: found.name, version: null, files: [], error: error.message };
+      }
+    },
+    async save(name, files, expectedVersion) {
+      const skill = await deps.localStore.save({ name, files, expectedVersion });
+      return { name: skill.name, version: skill.version };
+    },
+    async create(rawName) {
+      const name = rawName.trim();
+      if (name.length === 0) throw new Error("Enter a skill name.");
+      if (await deps.localStore.get(name)) throw new Error(`A local skill named ${name} already exists.`);
+      const skill = await deps.localStore.save({
+        name,
+        files: [{ path: "SKILL.md", content: newSkillTemplate(name) }],
+        source: null,
+        sourceHash: null,
+      });
+      return { name: skill.name, version: skill.version };
+    },
+    async remove(name) {
+      await deps.localStore.remove(name);
     },
     async testLangfuse() {
       const config = await deps.readConfig();

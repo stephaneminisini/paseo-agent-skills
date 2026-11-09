@@ -7,10 +7,14 @@ import { createLocalStore } from "./server/local-store";
 import { createSkillService, SettingsUnavailableError } from "./server/skill-service";
 import { configSettings } from "./shared/settings";
 import {
+  createSkillRpc,
+  deleteSkillRpc,
   importFoundRpc,
   importPathRpc,
   listSkillsRpc,
+  readSkillRpc,
   reimportRpc,
+  saveSkillRpc,
   searchSkillsRpc,
   testLangfuseRpc,
 } from "./shared/skills";
@@ -39,5 +43,12 @@ export default function contribute(server: PluginServerContext) {
   server.handle(importPathRpc, ({ path: folder, replace }) => service.importPath(folder, replace));
   server.handle(importFoundRpc, ({ id }) => service.importFound(id));
   server.handle(reimportRpc, ({ name }) => service.reimport(name));
+  server.handle(readSkillRpc, ({ ref }) => service.read(ref));
+  server.handle(saveSkillRpc, ({ name, files, expectedVersion }) => service.save(name, files, expectedVersion));
+  server.handle(createSkillRpc, ({ name }) => service.create(name));
+  server.handle(deleteSkillRpc, async ({ name }) => {
+    await service.remove(name);
+    return {};
+  });
   return () => {};
 }

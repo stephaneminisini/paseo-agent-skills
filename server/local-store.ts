@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import { isText, parseFrontmatter, type SkillText } from "./skill-folder";
+import { isText, MAX_SKILL_BYTES, MAX_SKILL_FILES, parseFrontmatter, SkillFolderError, type SkillText } from "./skill-folder";
 import { checkSkillPaths, LOCAL_MARKER_FILE, SkillStoreError, writeVersionFolder } from "./skill-store";
 
 export type SkillSource =
@@ -47,6 +47,8 @@ export interface LocalStore {
   list(): Promise<LocalSkill[]>;
   get(name: string): Promise<LocalSkill | null>;
   save(input: SaveInput): Promise<LocalSkill>;
+  /** Removes the skill from the list; its version folders stay for agents still using them. */
+  remove(name: string): Promise<void>;
 }
 
 const RECORD_FILE = "skill.json";
@@ -121,6 +123,13 @@ export function createLocalStore(options: { root: string; now?: () => Date }): L
       input.files.map((file) => file.path),
       input.name,
     );
+    const bytes = input.files.reduce((total, file) => total + Buffer.byteLength(file.content, "utf8"), 0);
+    if (input.files.length > MAX_SKILL_FILES || bytes > MAX_SKILL_BYTES) {
+      throw new SkillFolderError(
+        "too-large",
+        `Skill ${input.name} has more than ${MAX_SKILL_FILES} files or 2 MB; skills that large are not supported.`,
+      );
+    }
     for (const file of input.files) {
       if (!isText(Buffer.from(file.content, "utf8"))) {
         throw new SkillStoreError("non-text", `Skill ${input.name}: ${file.path} is not a text file.`);
@@ -187,15 +196,23 @@ export function createLocalStore(options: { root: string; now?: () => Date }): L
       const record = await readRecord(skillDir(name));
       return record ? toSkill(record) : null;
     },
+    remove(name) {
+      return enqueue(name, () => rm(path.join(skillDir(name), RECORD_FILE), { force: true }));
+    },
     save(input) {
-      const key = input.name;
-      const previous = queues.get(key) ?? Promise.resolve();
-      const task = previous.catch(() => undefined).then(() => saveNow(input));
-      queues.set(key, task);
-      void task.finally(() => {
-        if (queues.get(key) === task) queues.delete(key);
-      }).catch(() => undefined);
-      return task;
+      return enqueue(input.name, () => saveNow(input));
     },
   };
+
+  function enqueue<T>(key: string, work: () => Promise<T>): Promise<T> {
+    const previous = queues.get(key) ?? Promise.resolve();
+    const task = previous.catch(() => undefined).then(work);
+    queues.set(key, task);
+    void task
+      .finally(() => {
+        if (queues.get(key) === task) queues.delete(key);
+      })
+      .catch(() => undefined);
+    return task;
+  }
 }

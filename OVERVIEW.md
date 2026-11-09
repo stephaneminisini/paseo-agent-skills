@@ -24,8 +24,15 @@ is an independent copy. When its source folder changes later, the row shows **So
 and offers **Re-import**; when the folder is gone, **Source missing**. Skills from Claude Code
 plugins follow the plugin across updates.
 
-Importing and other changes are available on desktop and web. On a phone the screen is
-read-only.
+Tap a skill to open it. On desktop and web, a local skill opens in the editor: a file tree on the
+left (add files and folders, rename, delete) and the selected file on the right. **Save** creates
+the next version; agents already using an earlier version keep it. Unsaved changes stay as a
+draft while the app is open, marked **Unsaved** in the list, and are lost when the app reloads.
+**New skill** starts from a `SKILL.md` template, and **Delete** removes a local skill from the list
+and the picker while agents already using it keep their copy.
+
+Langfuse and found skills open read-only. On a phone every skill opens read-only: pick a file to
+read it.
 
 ## Limits
 
@@ -33,8 +40,8 @@ read-only.
   is shown as **Not importable**, with the file that blocks it.
 - A skill may have at most 200 files and 2 MB.
 - A skill's name is the `name` in its `SKILL.md` frontmatter.
-- Langfuse skills are read-only here. Editing local skills and syncing them to Langfuse are not
-  available yet.
+- A skill's name cannot be changed; create a new skill instead.
+- Langfuse skills are read-only here. Syncing local skills to Langfuse is not available yet.
 
 ## Setup
 

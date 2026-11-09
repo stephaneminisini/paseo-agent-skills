@@ -154,3 +154,37 @@ describe("review fixes", () => {
     expect(await readFile(path.join(saved.dir, "SKILL.md"), "utf8")).toContain("# NEW");
   });
 });
+
+describe("remove", () => {
+  it("drops the record and keeps version folders", async () => {
+    const store = createLocalStore({ root, now: NOW });
+    const first = await store.save({ name: "cut-release", files: files("cut-release") });
+    const before = await readFile(path.join(first.dir, "SKILL.md"), "utf8");
+    await store.remove("cut-release");
+    expect(await store.get("cut-release")).toBeNull();
+    expect(await store.list()).toEqual([]);
+    expect(await readFile(path.join(first.dir, "SKILL.md"), "utf8")).toBe(before);
+    const again = await store.save({ name: "cut-release", files: files("cut-release", "# new\n") });
+    expect(again.version).toBe(2);
+    expect(await readFile(path.join(first.dir, "SKILL.md"), "utf8")).toBe(before);
+  });
+
+  it("ignores an unknown name", async () => {
+    await createLocalStore({ root }).remove("nope");
+  });
+});
+
+describe("size limits", () => {
+  it("refuses a save over 200 files", async () => {
+    const store = createLocalStore({ root, now: NOW });
+    const many = [...files("big"), ...Array.from({ length: 200 }, (_, index) => ({ path: `f/${index}.txt`, content: "x" }))];
+    await expect(store.save({ name: "big", files: many })).rejects.toThrow("more than 200 files or 2 MB");
+    expect(await readdir(root)).toEqual([]);
+  });
+
+  it("refuses a save over 2 MB", async () => {
+    const store = createLocalStore({ root, now: NOW });
+    const big = [...files("big"), { path: "big.txt", content: "a".repeat(2.1 * 1024 * 1024) }];
+    await expect(store.save({ name: "big", files: big })).rejects.toThrow("more than 200 files or 2 MB");
+  });
+});
