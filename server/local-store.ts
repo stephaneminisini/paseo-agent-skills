@@ -2,12 +2,26 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import { isText, MAX_SKILL_BYTES, MAX_SKILL_FILES, parseFrontmatter, SkillFolderError, type SkillText } from "./skill-folder";
+import {
+  contentHash,
+  isText,
+  MAX_SKILL_BYTES,
+  MAX_SKILL_FILES,
+  parseFrontmatter,
+  readSkillFolder,
+  SkillFolderError,
+  type SkillText,
+} from "./skill-folder";
 import { checkSkillPaths, LOCAL_MARKER_FILE, SkillStoreError, writeVersionFolder } from "./skill-store";
 
 export type SkillSource =
   | { kind: "path"; path: string }
   | { kind: "claude-plugin"; marketplace: string; plugin: string; skill: string };
+
+export interface SyncBase {
+  version: number;
+  hash: string;
+}
 
 export interface LocalSkill {
   name: string;
@@ -16,6 +30,12 @@ export interface LocalSkill {
   updatedAt: string;
   source: SkillSource | null;
   sourceHash: string | null;
+  /** contentHash of the current version's files. */
+  hash: string;
+  /** Langfuse version and hash this copy was last synced from or with. */
+  syncBase: SyncBase | null;
+  /** Paths that came from outside the skill folder through symlinks at import; null when not tracked (records from before phase 3). */
+  externalPaths: string[] | null;
   /** Folder of the current version. */
   dir: string;
 }
@@ -39,6 +59,10 @@ export interface SaveInput {
   /** Omitted keeps the existing source; null clears it. */
   source?: SkillSource | null;
   sourceHash?: string | null;
+  /** Omitted keeps the current sync base. */
+  syncBase?: SyncBase | null;
+  /** Omitted keeps the current external paths that are still in `files`. */
+  externalPaths?: string[];
   /** Refuse the save unless the current version is this one. */
   expectedVersion?: number;
 }
@@ -47,6 +71,8 @@ export interface LocalStore {
   list(): Promise<LocalSkill[]>;
   get(name: string): Promise<LocalSkill | null>;
   save(input: SaveInput): Promise<LocalSkill>;
+  /** Records the Langfuse sync base without creating a version. */
+  setSyncBase(name: string, base: SyncBase): Promise<LocalSkill>;
   /** Removes the skill from the list; its version folders stay for agents still using them. */
   remove(name: string): Promise<void>;
 }
@@ -64,6 +90,10 @@ const RecordSchema = z.object({
   updatedAt: z.string(),
   source: SourceSchema.nullable(),
   sourceHash: z.string().nullable(),
+  // Added in phase 3; older records lack them.
+  hash: z.string().optional(),
+  syncBase: z.object({ version: z.number(), hash: z.string() }).nullable().optional(),
+  externalPaths: z.array(z.string()).optional(),
 });
 type SkillRecord = z.infer<typeof RecordSchema>;
 
@@ -87,8 +117,28 @@ export function createLocalStore(options: { root: string; now?: () => Date }): L
     return path.join(root, encodeURIComponent(name));
   }
 
-  function toSkill(record: SkillRecord): LocalSkill {
-    return { ...record, dir: path.join(skillDir(record.name), `v${record.version}`) };
+  async function toSkill(record: SkillRecord): Promise<LocalSkill> {
+    const dir = path.join(skillDir(record.name), `v${record.version}`);
+    let hash = record.hash;
+    if (hash === undefined) {
+      try {
+        hash = contentHash((await readSkillFolder(dir, { ignore: [LOCAL_MARKER_FILE] })).files);
+      } catch {
+        hash = "";
+      }
+    }
+    return {
+      name: record.name,
+      description: record.description,
+      version: record.version,
+      updatedAt: record.updatedAt,
+      source: record.source,
+      sourceHash: record.sourceHash,
+      hash,
+      syncBase: record.syncBase ?? null,
+      externalPaths: record.externalPaths ?? null,
+      dir,
+    };
   }
 
   async function readRecord(folder: string): Promise<SkillRecord | null> {
@@ -172,6 +222,11 @@ export function createLocalStore(options: { root: string; now?: () => Date }): L
       updatedAt: now().toISOString(),
       source: input.source === undefined ? (current?.source ?? null) : input.source,
       sourceHash: input.sourceHash === undefined ? (current?.sourceHash ?? null) : input.sourceHash,
+      hash: contentHash(input.files),
+      syncBase: input.syncBase === undefined ? (current?.syncBase ?? null) : input.syncBase,
+      externalPaths: (input.externalPaths ?? current?.externalPaths ?? []).filter((externalPath) =>
+        input.files.some((file) => file.path === externalPath),
+      ),
     };
     await writeRecord(folder, record);
     return toSkill(record);
@@ -187,14 +242,24 @@ export function createLocalStore(options: { root: string; now?: () => Date }): L
         throw error;
       }
       const records = await Promise.all(entries.map((entry) => readRecord(path.join(root, entry))));
-      return records
-        .filter((record): record is SkillRecord => record !== null)
-        .map(toSkill)
-        .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+      const skills = await Promise.all(
+        records.filter((record): record is SkillRecord => record !== null).map(toSkill),
+      );
+      return skills.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
     },
     async get(name) {
       const record = await readRecord(skillDir(name));
       return record ? toSkill(record) : null;
+    },
+    setSyncBase(name, base) {
+      return enqueue(name, async () => {
+        const folder = skillDir(name);
+        const current = await readRecord(folder);
+        if (!current) throw new Error(`Skill ${name} not found.`);
+        const record: SkillRecord = { ...current, syncBase: base };
+        await writeRecord(folder, record);
+        return toSkill(record);
+      });
     },
     remove(name) {
       return enqueue(name, () => rm(path.join(skillDir(name), RECORD_FILE), { force: true }));

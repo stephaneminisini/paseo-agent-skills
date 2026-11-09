@@ -24,6 +24,7 @@ import { ConfirmModal } from "./confirm-modal";
 import { drafts } from "./drafts";
 import { FileTree } from "./file-tree";
 import { MONOSPACE } from "./skill-viewer";
+import { SyncDialog } from "./sync-dialog";
 
 export interface SkillEditorProps {
   name: string;
@@ -52,6 +53,7 @@ export function SkillEditor({ name, hostId, theme, onClose }: SkillEditorProps) 
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savedOnce, setSavedOnce] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const text = { color: colors.foreground };
   const muted = { color: colors.foregroundMuted };
 
@@ -145,6 +147,12 @@ export function SkillEditor({ name, hostId, theme, onClose }: SkillEditorProps) 
         <Text style={muted}>{`Local v${draft.baseVersion}`}</Text>
         {dirty ? <Text style={{ color: colors.statusWarning }}>Unsaved changes</Text> : null}
         <View style={{ flex: 1 }} />
+        <ActionButton
+          label={dirty ? "Sync to Langfuse (save first)" : "Sync to Langfuse"}
+          theme={theme}
+          disabled={dirty || saving}
+          onPress={() => setSyncing(true)}
+        />
         <ActionButton label="Discard" theme={theme} disabled={!dirty || saving} onPress={() => setConfirm("discard")} />
         <ActionButton
           label={saving ? "Saving…" : `Save (v${draft.baseVersion + 1})`}
@@ -240,6 +248,22 @@ export function SkillEditor({ name, hostId, theme, onClose }: SkillEditorProps) 
             </View>
           </Modal.Content>
         </Modal>
+      ) : null}
+      {syncing ? (
+        <SyncDialog
+          target={{ kind: "local", name }}
+          theme={theme}
+          onClose={(changed) => {
+            setSyncing(false);
+            if (changed) {
+              setSavedOnce(true);
+              void queryClient.invalidateQueries({ queryKey: ["skills"] });
+              // "Take Langfuse's" creates a new local version; reload so the editor shows it.
+              drafts.discard(key);
+              void load();
+            }
+          }}
+        />
       ) : null}
       {confirm === "discard" ? (
         <ConfirmModal

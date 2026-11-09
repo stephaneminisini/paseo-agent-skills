@@ -6,6 +6,8 @@ import path from "node:path";
 export interface SkillText {
   path: string;
   content: string;
+  /** Reached through a symlink whose target is outside the skill folder. */
+  external?: true;
 }
 
 export interface SkillFolder {
@@ -100,7 +102,7 @@ export async function readSkillFolder(dir: string, options: { ignore?: string[] 
     throw error;
   }
 
-  const found: Array<{ relative: string; absolute: string }> = [];
+  const found: Array<{ relative: string; absolute: string; external: boolean }> = [];
   let bytes = 0;
 
   async function walk(absolute: string, relative: string, ancestors: Set<string>): Promise<void> {
@@ -126,7 +128,8 @@ export async function readSkillFolder(dir: string, options: { ignore?: string[] 
         await walk(childAbsolute, childRelative, new Set([...ancestors, real]));
       } else if (info.isFile()) {
         if (relative === "" && ignore.has(entry)) continue;
-        found.push({ relative: childRelative, absolute: childAbsolute });
+        const real = await realpath(childAbsolute);
+        found.push({ relative: childRelative, absolute: childAbsolute, external: !real.startsWith(rootReal + path.sep) });
         bytes += info.size;
         if (found.length > MAX_SKILL_FILES || bytes > MAX_SKILL_BYTES) throw tooLarge();
       }
@@ -141,7 +144,7 @@ export async function readSkillFolder(dir: string, options: { ignore?: string[] 
     if (!isText(buffer)) {
       throw new SkillFolderError("non-text", `${dir} is not importable: ${file.relative} is not a text file.`);
     }
-    files.push({ path: file.relative, content: buffer.toString("utf8") });
+    files.push({ path: file.relative, content: buffer.toString("utf8"), ...(file.external ? { external: true as const } : {}) });
   }
 
   const skillMd = files.find((file) => file.path === "SKILL.md");

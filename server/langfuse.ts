@@ -47,6 +47,11 @@ export interface LangfuseClient {
   /** One exact version with file contents. */
   getSkillVersion(name: string, version: number): Promise<SkillVersion>;
   testConnection(): Promise<{ projectName: string }>;
+  /** Creates a new version from every file; Langfuse labels it `latest`. */
+  createSkillVersion(
+    files: Array<{ path: string; content: string }>,
+    commitMessage: string,
+  ): Promise<{ name: string; version: number }>;
 }
 
 export interface LangfuseClientOptions {
@@ -83,6 +88,8 @@ const SkillVersionSchema = z.object({
   ),
 });
 
+const CreatedSchema = z.object({ name: z.string(), version: z.number() });
+
 function skillPath(name: string): string {
   return `/api/public/skills/${encodeURIComponent(name)}`;
 }
@@ -101,26 +108,30 @@ export function createLangfuseClient(options: LangfuseClientOptions): LangfuseCl
     `${options.keys.publicKey}:${options.keys.secretKey}`,
   ).toString("base64")}`;
 
-  async function getJson<T>(path: string, schema: z.ZodType<T>): Promise<T> {
+  async function getJson<T>(path: string, schema: z.ZodType<T>, post?: { body: unknown }): Promise<T> {
     if (baseUrl.length === 0) {
       throw new LangfuseError("config", "Set the Langfuse base URL in plugin settings.");
     }
     let response: Response;
     try {
-      response = await fetchImpl(`${baseUrl}${path}`, {
-        headers: { authorization, accept: "application/json" },
-      });
+      response = await fetchImpl(
+        `${baseUrl}${path}`,
+        post
+          ? {
+              method: "POST",
+              headers: { authorization, accept: "application/json", "content-type": "application/json" },
+              body: JSON.stringify(post.body),
+            }
+          : { headers: { authorization, accept: "application/json" } },
+      );
     } catch (error) {
       const cause = error instanceof Error && error.cause instanceof Error ? error.cause : error;
       const reason = cause instanceof Error ? cause.message : String(cause);
       throw new LangfuseError("network", `Cannot reach Langfuse at ${baseUrl}: ${reason}.`);
     }
     if (response.status === 401 || response.status === 403) {
-      throw new LangfuseError(
-        "auth",
-        `Langfuse rejected the keys (HTTP ${response.status}).`,
-        response.status,
-      );
+      const hint = post && response.status === 403 ? " Syncing needs keys that can write skills." : "";
+      throw new LangfuseError("auth", `Langfuse rejected the keys (HTTP ${response.status}).${hint}`, response.status);
     }
     if (!response.ok) {
       throw new LangfuseError(
@@ -175,6 +186,10 @@ export function createLangfuseClient(options: LangfuseClientOptions): LangfuseCl
           sha256Hash,
         })),
       };
+    },
+    async createSkillVersion(files, commitMessage) {
+      const created = await getJson("/api/public/skills", CreatedSchema, { body: { files, commitMessage } });
+      return { name: created.name, version: created.version };
     },
     async testConnection() {
       const { data } = await getJson("/api/public/projects", ProjectsSchema);

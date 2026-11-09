@@ -133,3 +133,21 @@ describe("parseFrontmatter", () => {
     expect(parseFrontmatter("# Title\nname: b\n")).toEqual({});
   });
 });
+
+describe("external files", () => {
+  it("flags a file that is a symlink to outside the skill folder", async () => {
+    const outside = await put("shared/SKILL.md", SKILL_MD);
+    await put("skill/run.sh", "echo\n");
+    await symlink(outside, path.join(root, "skill", "SKILL.md"));
+    const folder = await readSkillFolder(path.join(root, "skill"));
+    expect(folder.files.find((file) => file.path === "SKILL.md")?.external).toBe(true);
+    expect(folder.files.find((file) => file.path === "run.sh")?.external).toBeUndefined();
+  });
+
+  it("does not flag files of a symlinked skill folder", async () => {
+    await put("real/SKILL.md", SKILL_MD);
+    await symlink(path.join(root, "real"), path.join(root, "linked"));
+    const folder = await readSkillFolder(path.join(root, "linked"));
+    expect(folder.files.every((file) => file.external === undefined)).toBe(true);
+  });
+});

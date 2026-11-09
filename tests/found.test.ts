@@ -140,3 +140,18 @@ describe("review fixes", () => {
     expect((await scanFound(home)).map((skill) => skill.name)).toEqual(["cut-release"]);
   });
 });
+
+describe("external paths on import", () => {
+  it("records and later clears files that came from outside the folder", async () => {
+    const outside = await put("gstack/autoplan/SKILL.md", skillMd("autoplan"));
+    await mkdir(path.join(home, ".claude/skills/autoplan"), { recursive: true });
+    await symlink(outside, path.join(home, ".claude/skills/autoplan/SKILL.md"));
+    const dir = path.join(home, ".claude/skills/autoplan");
+    const imported = await importFromPath(store, dir, home);
+    expect(imported.externalPaths).toEqual(["SKILL.md"]);
+    await rm(path.join(dir, "SKILL.md"));
+    await writeFile(path.join(dir, "SKILL.md"), skillMd("autoplan"));
+    const again = await reimport(store, home, "autoplan");
+    expect(again.externalPaths).toEqual([]);
+  });
+});

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createLocalStore, LocalStoreError, type LocalStoreErrorKind, type SkillSource } from "../server/local-store";
-import type { SkillText } from "../server/skill-folder";
+import { contentHash, type SkillText } from "../server/skill-folder";
 
 const NOW = () => new Date("2026-11-08T00:00:00.000Z");
 
@@ -52,6 +52,9 @@ describe("createLocalStore", () => {
       updatedAt: "2026-11-08T00:00:00.000Z",
       source: SOURCE,
       sourceHash: "h1",
+      hash: contentHash(files("cut-release")),
+      syncBase: null,
+      externalPaths: [],
       dir: path.join(root, "cut-release", "v1"),
     });
     expect(await readFile(path.join(saved.dir, "scripts", "run.sh"), "utf8")).toBe("echo cut-release\n");
@@ -186,5 +189,43 @@ describe("size limits", () => {
     const store = createLocalStore({ root, now: NOW });
     const big = [...files("big"), { path: "big.txt", content: "a".repeat(2.1 * 1024 * 1024) }];
     await expect(store.save({ name: "big", files: big })).rejects.toThrow("more than 200 files or 2 MB");
+  });
+});
+
+describe("hash, sync base and external paths", () => {
+  it("records the content hash and keeps the sync base across saves", async () => {
+    const store = createLocalStore({ root, now: NOW });
+    const first = await store.save({ name: "cut-release", files: files("cut-release") });
+    expect(first.hash).toBe(contentHash(files("cut-release")));
+    expect(first.syncBase).toBeNull();
+    expect(first.externalPaths).toEqual([]);
+    const based = await store.setSyncBase("cut-release", { version: 4, hash: "h4" });
+    expect(based.version).toBe(1);
+    expect(based.dir).toBe(first.dir);
+    expect(based.syncBase).toEqual({ version: 4, hash: "h4" });
+    const second = await store.save({ name: "cut-release", files: files("cut-release", "# v2\n") });
+    expect(second.syncBase).toEqual({ version: 4, hash: "h4" });
+  });
+
+  it("keeps only external paths still present after an edit", async () => {
+    const store = createLocalStore({ root, now: NOW });
+    await store.save({ name: "cut-release", files: files("cut-release"), externalPaths: ["SKILL.md", "scripts/run.sh"] });
+    const edited = await store.save({ name: "cut-release", files: [files("cut-release")[0]!] });
+    expect(edited.externalPaths).toEqual(["SKILL.md"]);
+  });
+
+  it("reads records written before these fields existed", async () => {
+    const store = createLocalStore({ root, now: NOW });
+    const saved = await store.save({ name: "old", files: files("old") });
+    const recordPath = path.join(root, "old", "skill.json");
+    const record = JSON.parse(await readFile(recordPath, "utf8"));
+    delete record.hash;
+    delete record.syncBase;
+    delete record.externalPaths;
+    await writeFile(recordPath, JSON.stringify(record));
+    const read = await store.get("old");
+    expect(read?.hash).toBe(saved.hash);
+    expect(read?.syncBase).toBeNull();
+    expect(read?.externalPaths).toBeNull();
   });
 });

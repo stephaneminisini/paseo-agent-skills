@@ -7,7 +7,14 @@ export type SourceStatus = "unchanged" | "updated" | "missing";
 
 async function importFolder(store: LocalStore, dir: string, source: SkillSource): Promise<LocalSkill> {
   const folder = await readSkillFolder(dir);
-  return store.save({ name: folder.name, files: folder.files, source, sourceHash: contentHash(folder.files) });
+  const files = folder.files.map(({ path, content }) => ({ path, content }));
+  return store.save({
+    name: folder.name,
+    files,
+    source,
+    sourceHash: contentHash(files),
+    externalPaths: folder.files.filter((file) => file.external).map((file) => file.path),
+  });
 }
 
 /**
