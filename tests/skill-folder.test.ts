@@ -151,3 +151,19 @@ describe("external files", () => {
     expect(folder.files.every((file) => file.external === undefined)).toBe(true);
   });
 });
+
+describe("parseFrontmatter block values", () => {
+  it("folds a >- description into one line", () => {
+    expect(parseFrontmatter("---\nname: rds\ndescription: >-\n  Run a health check\n  across every RDS instance.\n---\nbody")).toEqual({
+      name: "rds",
+      description: "Run a health check across every RDS instance.",
+    });
+  });
+
+  it("keeps line breaks for a | description", () => {
+    expect(parseFrontmatter("---\nname: a\ndescription: |\n  line one\n  line two\nother: x\n---\n")).toEqual({
+      name: "a",
+      description: "line one\nline two",
+    });
+  });
+});

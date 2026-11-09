@@ -52,17 +52,37 @@ function unquote(value: string): string {
   return value;
 }
 
-/** Reads `name` and `description` from a leading `---` frontmatter block of `key: value` lines. */
+/**
+ * Reads `name` and `description` from a leading `---` frontmatter block. Values are one-line
+ * `key: value`, or YAML block values (`>`/`>-` folded into one line, `|`/`|-` keeping line breaks)
+ * on the following indented lines.
+ */
 export function parseFrontmatter(markdown: string): { name?: string; description?: string } {
   const lines = markdown.split(/\r?\n/);
   if (lines[0]?.trim() !== "---") return {};
+  const end = lines.findIndex((line, index) => index > 0 && line.trim() === "---");
+  if (end < 0) return {};
+  const body = lines.slice(1, end);
   const result: { name?: string; description?: string } = {};
-  for (const line of lines.slice(1)) {
-    if (line.trim() === "---") return result;
-    const match = /^(name|description):\s*(.*)$/.exec(line);
-    if (match) result[match[1] as "name" | "description"] = unquote((match[2] ?? "").trim());
+  for (let index = 0; index < body.length; index += 1) {
+    const match = /^(name|description):\s*(.*)$/.exec(body[index] ?? "");
+    if (!match) continue;
+    const key = match[1] as "name" | "description";
+    const raw = (match[2] ?? "").trim();
+    const block = /^([>|])[-+]?$/.exec(raw);
+    if (!block) {
+      result[key] = unquote(raw);
+      continue;
+    }
+    const parts: string[] = [];
+    while (index + 1 < body.length && /^(\s+\S|\s*$)/.test(body[index + 1] ?? "")) {
+      index += 1;
+      parts.push((body[index] ?? "").trim());
+    }
+    while (parts.length > 0 && parts[parts.length - 1] === "") parts.pop();
+    result[key] = block[1] === ">" ? parts.filter((part) => part.length > 0).join(" ") : parts.join("\n");
   }
-  return {};
+  return result;
 }
 
 /** Order-independent sha256 (hex) over every file's path and content. */
