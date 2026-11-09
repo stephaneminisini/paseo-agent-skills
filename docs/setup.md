@@ -37,7 +37,8 @@ Open **Settings → host → Plugins → Agent Skills → Langfuse**:
 | Label         | `production`                                   |
 | Key file path | `~/.config/paseo-agent-skills/langfuse.env` |
 
-Save, then press **Test connection**. It shows the Langfuse project name.
+Save, then press **Test connection**. It shows the Langfuse project name. **Sync** creates skill
+versions, so it needs keys that can write skills; read-only keys still list and attach skills.
 
 ## First test
 

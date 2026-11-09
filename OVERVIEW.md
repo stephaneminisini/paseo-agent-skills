@@ -34,6 +34,26 @@ and the picker while agents already using it keep their copy.
 Langfuse and found skills open read-only. On a phone every skill opens read-only: pick a file to
 read it.
 
+## Sync to Langfuse
+
+**Sync** pushes a local or found skill to Langfuse as a new version, so other hosts can use it.
+Langfuse labels it `latest`; promote it to `production` in Langfuse when it is ready. Sync never
+changes labels and never deletes anything.
+
+- Not in Langfuse yet, or Langfuse unchanged since your last sync: the new version is created
+  right away.
+- Already identical: nothing is sent.
+- Langfuse changed since your last sync (or a found skill differs from Langfuse): a review shows
+  each file as changed, only here or only in Langfuse, with a line diff. Choose **Push mine
+  anyway**, **Take Langfuse's** (saves Langfuse's copy as a new local version; local skills only),
+  or **Cancel**. If Langfuse gets yet another version while you review, the push is refused and
+  you review again.
+- Files that came into a skill through a symlink pointing outside its folder are listed, and you
+  must tick **Include files from outside the skill folder** before pushing.
+
+Local rows show the sync state: **Langfuse vN** when in sync, **Not in Langfuse**, **Local
+changes**, or **Langfuse changed**. Sync is available on desktop and web.
+
 ## Limits
 
 - Text files only. A skill folder with any other kind of file (images, fonts, native libraries)
@@ -41,7 +61,7 @@ read it.
 - A skill may have at most 200 files and 2 MB.
 - A skill's name is the `name` in its `SKILL.md` frontmatter.
 - A skill's name cannot be changed; create a new skill instead.
-- Langfuse skills are read-only here. Syncing local skills to Langfuse is not available yet.
+- Langfuse skills are read-only here; change them by syncing a local copy.
 
 ## Setup
 
@@ -71,7 +91,9 @@ format and development commands.
   automatically.
 - Import reads the source folder and never writes to it. The plugin scans the found locations
   listed above, and reads `~/.claude/plugins/installed_plugins.json` to find plugin skills.
-- Your Langfuse keys are sent only to the configured Langfuse URL, to list and download skills.
+- Your Langfuse keys are sent only to the configured Langfuse URL, to list, download and (on
+  Sync) create skill versions. Sync sends every file of the skill to Langfuse, including files
+  reached through symlinks once you confirm them.
 - The plugin never runs skill files. The attachment note goes to your agent provider with your
   message; when the agent reads skill files, their contents go to the provider like any other
   file it reads, and it runs skill scripts under its normal permissions.
