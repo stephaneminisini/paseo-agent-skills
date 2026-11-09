@@ -15,6 +15,7 @@ import {
   reimportRpc,
   type SkillRefInput,
   type SkillRow,
+  type SyncTarget,
 } from "../shared/skills";
 import { type Badge, filterRows, rowBadges, type SkillFilter } from "../shared/skills-view";
 import { ActionButton } from "./action-button";
@@ -22,6 +23,7 @@ import { ConfirmModal } from "./confirm-modal";
 import { drafts } from "./drafts";
 import { SkillEditor } from "./skill-editor";
 import { SkillViewer } from "./skill-viewer";
+import { SyncDialog } from "./sync-dialog";
 
 const FILTERS: ReadonlyArray<{ id: SkillFilter; label: string }> = [
   { id: "all", label: "All" },
@@ -82,6 +84,7 @@ export function SkillsScreen({ theme, layout, host }: PluginScreenProps) {
   const [newName, setNewName] = useState("");
   const [deleting, setDeleting] = useState<string | null>(null);
   const [reimportConfirm, setReimportConfirm] = useState<string | null>(null);
+  const [syncTarget, setSyncTarget] = useState<SyncTarget | null>(null);
   const createSkill = useRpc(createSkillRpc);
   const deleteSkill = useRpc(deleteSkillRpc);
   const unsaved = new Set(drafts.unsaved());
@@ -172,6 +175,18 @@ export function SkillsScreen({ theme, layout, host }: PluginScreenProps) {
                     <BadgeChip badge={{ label: "Unsaved", tone: "warning" }} theme={theme} />
                   ) : null}
                   <View style={{ flex: 1 }} />
+                  {editable && (row.local || importable) ? (
+                    <ActionButton
+                      label="Sync"
+                      theme={theme}
+                      disabled={busy}
+                      onPress={() =>
+                        setSyncTarget(
+                          row.local ? { kind: "local", name: row.name } : { kind: "found", id: importable?.id ?? "" },
+                        )
+                      }
+                    />
+                  ) : null}
                   {editable && row.local ? (
                     <ActionButton label="Delete" theme={theme} disabled={busy} onPress={() => setDeleting(row.name)} />
                   ) : null}
@@ -334,6 +349,16 @@ export function SkillsScreen({ theme, layout, host }: PluginScreenProps) {
             </View>
           </Modal.Content>
         </Modal>
+      ) : null}
+      {syncTarget ? (
+        <SyncDialog
+          target={syncTarget}
+          theme={theme}
+          onClose={(changed) => {
+            setSyncTarget(null);
+            if (changed) void queryClient.invalidateQueries({ queryKey: ["skills"] });
+          }}
+        />
       ) : null}
       {reimportConfirm ? (
         <ConfirmModal

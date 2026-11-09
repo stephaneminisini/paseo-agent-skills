@@ -39,7 +39,7 @@ describe("rowBadges", () => {
     expect(badges).toEqual([
       { label: "Local v3", tone: "neutral" },
       { label: "Source updated", tone: "warning" },
-      { label: "Langfuse v2", tone: "success" },
+      { label: "Langfuse changed", tone: "warning" },
       { label: "Found", tone: "neutral" },
     ]);
   });
@@ -59,6 +59,58 @@ describe("rowBadges", () => {
     expect(badges).toEqual([
       { label: "Local v1", tone: "neutral" },
       { label: "Source missing", tone: "warning" },
+      { label: "Not in Langfuse", tone: "neutral" },
     ]);
+  });
+});
+
+describe("rowBadges sync state", () => {
+  function local(syncedVersion: number | null, localChanges: boolean) {
+    return { version: 3, sourceStatus: null, sourceLabel: null, syncedVersion, localChanges };
+  }
+  const labels = (r: SkillRow) => rowBadges(r).map((badge) => badge.label);
+
+  it("shows the Langfuse version when in sync", () => {
+    expect(labels(row({ name: "a", local: local(2, false), langfuse: { latestVersion: 2, labeledVersion: 2 } }))).toEqual([
+      "Local v3",
+      "Langfuse v2",
+    ]);
+  });
+
+  it("shows Not in Langfuse", () => {
+    expect(labels(row({ name: "a", local: local(null, false) }))).toEqual(["Local v3", "Not in Langfuse"]);
+  });
+
+  it("shows Local changes only", () => {
+    expect(labels(row({ name: "a", local: local(2, true), langfuse: { latestVersion: 2, labeledVersion: 2 } }))).toEqual([
+      "Local v3",
+      "Local changes",
+    ]);
+  });
+
+  it("shows Langfuse changed only", () => {
+    expect(labels(row({ name: "a", local: local(2, false), langfuse: { latestVersion: 3, labeledVersion: 2 } }))).toEqual([
+      "Local v3",
+      "Langfuse changed",
+    ]);
+  });
+
+  it("shows both", () => {
+    expect(labels(row({ name: "a", local: local(2, true), langfuse: { latestVersion: 3, labeledVersion: 2 } }))).toEqual([
+      "Local v3",
+      "Local changes",
+      "Langfuse changed",
+    ]);
+  });
+
+  it("treats a never-synced local skill with a Langfuse copy as Langfuse changed", () => {
+    expect(labels(row({ name: "a", local: local(null, false), langfuse: { latestVersion: 1, labeledVersion: 1 } }))).toEqual([
+      "Local v3",
+      "Langfuse changed",
+    ]);
+  });
+
+  it("keeps the Langfuse version for a Langfuse-only row", () => {
+    expect(labels(row({ name: "a", langfuse: { latestVersion: 4, labeledVersion: 4 } }))).toEqual(["Langfuse v4"]);
   });
 });

@@ -94,3 +94,33 @@ function backtrack(a: string[], b: string[], trace: Int32Array[], d: number, off
   }
   return out.reverse();
 }
+
+export type DisplayLine = DiffLine | { kind: "skip"; count: number };
+
+/** Replaces unchanged runs longer than `minRun` lines with a skip marker, keeping `context` lines next to changes. */
+export function collapseDiff(lines: DiffLine[], context = 3, minRun = 6): DisplayLine[] {
+  const out: DisplayLine[] = [];
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index] as DiffLine;
+    if (line.kind !== "same") {
+      out.push(line);
+      index += 1;
+      continue;
+    }
+    let end = index;
+    while (end < lines.length && (lines[end] as DiffLine).kind === "same") end += 1;
+    const run = lines.slice(index, end);
+    const keepBefore = index === 0 ? 0 : context;
+    const keepAfter = end === lines.length ? 0 : context;
+    if (run.length > minRun && run.length > keepBefore + keepAfter) {
+      out.push(...run.slice(0, keepBefore));
+      out.push({ kind: "skip", count: run.length - keepBefore - keepAfter });
+      out.push(...run.slice(run.length - keepAfter));
+    } else {
+      out.push(...run);
+    }
+    index = end;
+  }
+  return out;
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { lineDiff, MAX_DIFF_LINES } from "../shared/diff";
+import { collapseDiff, lineDiff, MAX_DIFF_LINES } from "../shared/diff";
 
 describe("lineDiff", () => {
   it("marks identical text as same", () => {
@@ -63,5 +63,26 @@ describe("lineDiff reconstruction", () => {
       expect(diff.filter((line) => line.kind !== "added").map((line) => line.text).join("\n")).toBe(before);
       expect(diff.filter((line) => line.kind !== "removed").map((line) => line.text).join("\n")).toBe(after);
     }
+  });
+});
+
+describe("collapseDiff", () => {
+  it("collapses unchanged runs longer than 6 lines, keeping 3 lines of context", () => {
+    const lines = [
+      ...Array.from({ length: 10 }, (_, index) => ({ kind: "same" as const, text: `s${index}` })),
+      { kind: "added" as const, text: "new" },
+      ...Array.from({ length: 4 }, (_, index) => ({ kind: "same" as const, text: `t${index}` })),
+    ];
+    expect(collapseDiff(lines)).toEqual([
+      { kind: "skip", count: 7 },
+      { kind: "same", text: "s7" },
+      { kind: "same", text: "s8" },
+      { kind: "same", text: "s9" },
+      { kind: "added", text: "new" },
+      { kind: "same", text: "t0" },
+      { kind: "same", text: "t1" },
+      { kind: "same", text: "t2" },
+      { kind: "same", text: "t3" },
+    ]);
   });
 });

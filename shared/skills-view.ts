@@ -23,12 +23,27 @@ export function rowBadges(row: SkillRow): Badge[] {
     if (row.local.sourceStatus === "updated") badges.push({ label: "Source updated", tone: "warning" });
     if (row.local.sourceStatus === "missing") badges.push({ label: "Source missing", tone: "warning" });
   }
-  if (row.langfuse) badges.push({ label: `Langfuse v${row.langfuse.latestVersion}`, tone: "success" });
+  badges.push(...langfuseBadges(row));
   if (row.found.length > 0) {
     badges.push({ label: "Found", tone: "neutral" });
     if (!row.local && row.found.every((entry) => !entry.importable)) {
       badges.push({ label: "Not importable", tone: "warning" });
     }
   }
+  return badges;
+}
+
+/** Langfuse badges: sync state for local rows, the latest version otherwise. */
+function langfuseBadges(row: SkillRow): Badge[] {
+  if (!row.local) {
+    return row.langfuse ? [{ label: `Langfuse v${row.langfuse.latestVersion}`, tone: "success" }] : [];
+  }
+  if (!row.langfuse) return [{ label: "Not in Langfuse", tone: "neutral" }];
+  const { syncedVersion, localChanges } = row.local;
+  const langfuseChanged = syncedVersion === null || row.langfuse.latestVersion > syncedVersion;
+  if (!localChanges && !langfuseChanged) return [{ label: `Langfuse v${row.langfuse.latestVersion}`, tone: "success" }];
+  const badges: Badge[] = [];
+  if (localChanges) badges.push({ label: "Local changes", tone: "warning" });
+  if (langfuseChanged) badges.push({ label: "Langfuse changed", tone: "warning" });
   return badges;
 }
