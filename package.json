@@ -1,5 +1,5 @@
 {
-  "name": "langfuse-skills",
+  "name": "agent-skills",
   "private": true,
   "version": "0.0.0",
   "files": [
@@ -33,6 +33,6 @@
   "description": "Attach Langfuse skills to a Paseo agent launch.",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/stephaneminisini/paseo-langfuse-skills.git"
+    "url": "git+https://github.com/stephaneminisini/paseo-agent-skills.git"
   }
 }

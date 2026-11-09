@@ -1,24 +1,24 @@
-# paseo-langfuse-skills
+# paseo-agent-skills
 
-A [Paseo](https://paseo.sh) plugin that attaches [Langfuse skills](https://langfuse.com/docs/skill-management)
+A [Paseo](https://paseo.sh) plugin that attaches skills from a local store or [Langfuse](https://langfuse.com/docs/skill-management)
 to an agent launch. See [OVERVIEW.md](OVERVIEW.md) for what it does and [docs/setup.md](docs/setup.md)
 for setup.
 
 ## Install
 
 ```bash
-paseo plugin add git:stephaneminisini/paseo-langfuse-skills
+paseo plugin add git:stephaneminisini/paseo-agent-skills
 ```
 
 ## Key file
 
 ```bash
-mkdir -p ~/.config/paseo-langfuse-skills
-cat > ~/.config/paseo-langfuse-skills/langfuse.env <<'KEYS'
+mkdir -p ~/.config/paseo-agent-skills
+cat > ~/.config/paseo-agent-skills/langfuse.env <<'KEYS'
 LANGFUSE_PUBLIC_KEY=pk-lf-...
 LANGFUSE_SECRET_KEY=sk-lf-...
 KEYS
-chmod 600 ~/.config/paseo-langfuse-skills/langfuse.env
+chmod 600 ~/.config/paseo-agent-skills/langfuse.env
 ```
 
 ## Development
@@ -27,6 +27,6 @@ chmod 600 ~/.config/paseo-langfuse-skills/langfuse.env
 npm install
 npm run typecheck
 npm test
-paseo plugin install /absolute/path/to/paseo-langfuse-skills
-paseo plugin reload langfuse-skills   # after changes
+paseo plugin install /absolute/path/to/paseo-agent-skills
+paseo plugin reload agent-skills   # after changes
 ```
