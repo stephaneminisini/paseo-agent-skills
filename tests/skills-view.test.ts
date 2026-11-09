@@ -6,7 +6,7 @@ function row(partial: Partial<SkillRow> & { name: string }): SkillRow {
   return { description: "", local: null, langfuse: null, found: [], ...partial };
 }
 
-const LOCAL = row({ name: "pr-review", local: { version: 3, sourceStatus: null, sourceLabel: null } });
+const LOCAL = row({ name: "pr-review", local: { version: 3, sourceStatus: null, sourceLabel: null, syncedVersion: null, localChanges: false } });
 const LANGFUSE = row({ name: "qai-cut-release", langfuse: { latestVersion: 1, labeledVersion: 1 } });
 const FOUND = row({
   name: "brainstorming",
@@ -31,7 +31,7 @@ describe("rowBadges", () => {
     const badges = rowBadges(
       row({
         name: "cut-release",
-        local: { version: 3, sourceStatus: "updated", sourceLabel: "~/.claude/skills/cut-release" },
+        local: { version: 3, sourceStatus: "updated", sourceLabel: "~/.claude/skills/cut-release", syncedVersion: null, localChanges: false },
         langfuse: { latestVersion: 2, labeledVersion: 2 },
         found: [{ id: "f", label: "~/.claude/skills", importable: true, reason: null }],
       }),
@@ -55,7 +55,7 @@ describe("rowBadges", () => {
   });
 
   it("shows a missing source", () => {
-    const badges = rowBadges(row({ name: "x", local: { version: 1, sourceStatus: "missing", sourceLabel: "/gone" } }));
+    const badges = rowBadges(row({ name: "x", local: { version: 1, sourceStatus: "missing", sourceLabel: "/gone", syncedVersion: null, localChanges: false } }));
     expect(badges).toEqual([
       { label: "Local v1", tone: "neutral" },
       { label: "Source missing", tone: "warning" },

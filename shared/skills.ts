@@ -30,6 +30,8 @@ export const SkillRowSchema = z.object({
       version: z.number(),
       sourceStatus: z.enum(["unchanged", "updated", "missing"]).nullable(),
       sourceLabel: z.string().nullable(),
+      syncedVersion: z.number().nullable(),
+      localChanges: z.boolean(),
     })
     .nullable(),
   langfuse: z.object({ latestVersion: z.number(), labeledVersion: z.number().nullable() }).nullable(),
@@ -102,6 +104,54 @@ export const deleteSkillRpc = defineRpc({
   name: "skills.local.delete",
   input: z.object({ name: z.string() }),
   output: z.object({}),
+});
+
+export const SyncTargetSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("local"), name: z.string() }),
+  z.object({ kind: z.literal("found"), id: z.string() }),
+]);
+export type SyncTarget = z.infer<typeof SyncTargetSchema>;
+
+export const SyncFileSchema = z.object({
+  path: z.string(),
+  /** From Langfuse latest to the local or found files. */
+  change: z.enum(["same", "added", "removed", "changed"]),
+  local: z.string().nullable(),
+  langfuse: z.string().nullable(),
+});
+export type SyncFile = z.infer<typeof SyncFileSchema>;
+
+export const SyncPreviewSchema = z.object({
+  outcome: z.enum(["create", "identical", "fast-forward", "conflict"]),
+  name: z.string(),
+  /** Langfuse latest at preview time; null when the skill is not in Langfuse. */
+  langfuseVersion: z.number().nullable(),
+  /** The local copy's sync base version. */
+  baseVersion: z.number().nullable(),
+  /** Empty for identical. */
+  files: z.array(SyncFileSchema),
+  externalPaths: z.array(z.string()),
+});
+export type SyncPreview = z.infer<typeof SyncPreviewSchema>;
+
+export const previewSyncRpc = defineRpc({
+  name: "skills.sync.preview",
+  input: z.object({ target: SyncTargetSchema }),
+  output: SyncPreviewSchema,
+});
+export const pushSyncRpc = defineRpc({
+  name: "skills.sync.push",
+  input: z.object({
+    target: SyncTargetSchema,
+    expectedLangfuseVersion: z.number().nullable(),
+    includeExternal: z.boolean(),
+  }),
+  output: z.object({ version: z.number(), message: z.string() }),
+});
+export const takeSyncRpc = defineRpc({
+  name: "skills.sync.take",
+  input: z.object({ name: z.string(), langfuseVersion: z.number() }),
+  output: z.object({ localVersion: z.number(), message: z.string() }),
 });
 
 /** SKILL.md for a new local skill. */

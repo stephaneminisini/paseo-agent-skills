@@ -53,6 +53,9 @@ class FakeLangfuse implements LangfuseClient {
   async testConnection() {
     return { projectName: "Acme" };
   }
+  async createSkillVersion(): Promise<{ name: string; version: number }> {
+    throw new Error("not used in these tests");
+  }
 }
 
 const CUT_RELEASE: FakeSkill = {
@@ -232,7 +235,7 @@ describe("createSkillService.list", () => {
     const { rows, langfuseError } = await service(new FakeLangfuse([CUT_RELEASE])).list({});
     expect(langfuseError).toBeNull();
     const cut = rows.find((row) => row.name === "cut-release");
-    expect(cut?.local).toEqual({ version: 1, sourceStatus: null, sourceLabel: null });
+    expect(cut?.local).toEqual({ version: 1, sourceStatus: null, sourceLabel: null, syncedVersion: null, localChanges: false });
     expect(cut?.langfuse).toEqual({ latestVersion: 2, labeledVersion: 2 });
     expect(cut?.found).toEqual([
       expect.objectContaining({ label: "~/.claude/skills", importable: true, reason: null }),

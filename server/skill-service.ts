@@ -9,11 +9,14 @@ import {
   type ReadSkillResult,
   type SkillRefInput,
   type SkillRow,
+  type SyncFile,
+  type SyncPreview,
+  type SyncTarget,
 } from "../shared/skills";
 import { type FoundSkill, scanFound } from "./found";
 import { importFound, importFromPath, reimport, sourceStatus } from "./importer";
 import type { LocalSkill, LocalStore } from "./local-store";
-import { readSkillFolder, SkillFolderError, type SkillText } from "./skill-folder";
+import { contentHash, readSkillFolder, SkillFolderError, type SkillText } from "./skill-folder";
 import type { LangfuseKeys } from "./key-file";
 import { type LangfuseClient, LangfuseError, type SkillRef, type SkillSummary } from "./langfuse";
 import { ensureSkillVersion, LOCAL_MARKER_FILE, MANIFEST_FILE, SkillStoreError } from "./skill-store";
@@ -60,6 +63,9 @@ export interface SkillService {
   save(name: string, files: SkillText[], expectedVersion: number): Promise<{ name: string; version: number }>;
   create(name: string): Promise<{ name: string; version: number }>;
   remove(name: string): Promise<void>;
+  previewSync(target: SyncTarget): Promise<SyncPreview>;
+  pushSync(target: SyncTarget, expectedLangfuseVersion: number | null, includeExternal: boolean): Promise<{ version: number; message: string }>;
+  takeSync(name: string, langfuseVersion: number): Promise<{ localVersion: number; message: string }>;
 }
 
 /** Runs `task` over `inputs` with at most `limit` in flight, keeping input order. */
@@ -75,6 +81,17 @@ async function mapLimited<T, R>(inputs: T[], limit: number, task: (input: T) => 
   }
   await Promise.all(Array.from({ length: Math.min(limit, inputs.length) }, worker));
   return results;
+}
+
+/** Per-file changes from Langfuse's files to the local or found files, sorted by path. */
+function compareFiles(local: SkillText[], remote: SkillText[]): SyncFile[] {
+  const paths = [...new Set([...local.map((file) => file.path), ...remote.map((file) => file.path)])].sort();
+  return paths.map((filePath) => {
+    const mine = local.find((file) => file.path === filePath)?.content ?? null;
+    const theirs = remote.find((file) => file.path === filePath)?.content ?? null;
+    const change = mine === null ? "removed" : theirs === null ? "added" : mine === theirs ? "same" : "changed";
+    return { path: filePath, change, local: mine, langfuse: theirs };
+  });
 }
 
 function byName(a: string, b: string): number {
@@ -189,6 +206,51 @@ export function createSkillService(deps: SkillServiceDeps): SkillService {
     return rows;
   }
 
+  async function langfuseClient(): Promise<{ config: Config; client: LangfuseClient }> {
+    const config = await deps.readConfig();
+    return { config, client: await clientFor(config) };
+  }
+
+  async function latestFiles(client: LangfuseClient, name: string): Promise<{ version: number; files: SkillText[] } | null> {
+    const ref = await client.resolveSkill(name, "latest");
+    if (!ref) return null;
+    const version = await client.getSkillVersion(name, ref.version);
+    return { version: ref.version, files: version.files.map(({ path: filePath, content }) => ({ path: filePath, content })) };
+  }
+
+  interface SyncSubject {
+    name: string;
+    files: SkillText[];
+    externalPaths: string[];
+    commitMessage: string;
+    local: LocalSkill | null;
+  }
+
+  async function loadSyncSubject(target: SyncTarget): Promise<SyncSubject> {
+    if (target.kind === "local") {
+      const skill = await deps.localStore.get(target.name);
+      if (!skill) throw new Error("Skill not found; refresh the list.");
+      const folder = await readSkillFolder(skill.dir, { ignore: [LOCAL_MARKER_FILE] });
+      return {
+        name: skill.name,
+        files: folder.files.map(({ path: filePath, content }) => ({ path: filePath, content })),
+        externalPaths: skill.externalPaths,
+        commitMessage: `Synced from Paseo Agent Skills (local v${skill.version})`,
+        local: skill,
+      };
+    }
+    const found = (await scanFound(deps.home)).find((skill) => skill.id === target.id);
+    if (!found) throw new Error("Skill not found; refresh the list.");
+    const folder = await readSkillFolder(found.dir);
+    return {
+      name: folder.name,
+      files: folder.files.map(({ path: filePath, content }) => ({ path: filePath, content })),
+      externalPaths: folder.files.filter((file) => file.external).map((file) => file.path),
+      commitMessage: `Synced from Paseo Agent Skills (${foundLabel(found)})`,
+      local: null,
+    };
+  }
+
   function foundLabel(found: FoundSkill): string {
     if (found.origin.kind === "claude-plugin") return `Claude plugin ${found.origin.plugin} ${found.origin.version}`.trim();
     return `~/.${found.origin.tool}/skills`;
@@ -240,6 +302,8 @@ export function createSkillService(deps: SkillServiceDeps): SkillService {
           version: skill.version,
           sourceStatus: await sourceStatus(deps.home, skill),
           sourceLabel: sourceLabel(skill),
+          syncedVersion: skill.syncBase?.version ?? null,
+          localChanges: skill.syncBase !== null && skill.hash !== skill.syncBase.hash,
         };
       }
       for (const [name, info] of langfuse) {
@@ -332,6 +396,52 @@ export function createSkillService(deps: SkillServiceDeps): SkillService {
     },
     async remove(name) {
       await deps.localStore.remove(name);
+    },
+    async previewSync(target) {
+      const subject = await loadSyncSubject(target);
+      const { client } = await langfuseClient();
+      const latest = await latestFiles(client, subject.name);
+      const base = subject.local?.syncBase ?? null;
+      const common = { name: subject.name, baseVersion: base?.version ?? null, externalPaths: subject.externalPaths };
+      if (!latest) {
+        return { ...common, outcome: "create", langfuseVersion: null, files: compareFiles(subject.files, []) };
+      }
+      if (contentHash(latest.files) === contentHash(subject.files)) {
+        if (subject.local) {
+          await deps.localStore.setSyncBase(subject.name, { version: latest.version, hash: contentHash(latest.files) });
+        }
+        return { ...common, outcome: "identical", langfuseVersion: latest.version, files: [] };
+      }
+      const outcome = subject.local && base?.version === latest.version ? "fast-forward" : "conflict";
+      return { ...common, outcome, langfuseVersion: latest.version, files: compareFiles(subject.files, latest.files) };
+    },
+    async pushSync(target, expectedLangfuseVersion, includeExternal) {
+      const subject = await loadSyncSubject(target);
+      const { client } = await langfuseClient();
+      const latest = await client.resolveSkill(subject.name, "latest");
+      if ((latest?.version ?? null) !== expectedLangfuseVersion) {
+        throw new Error("Langfuse changed again since the review; review again.");
+      }
+      if (subject.externalPaths.length > 0 && !includeExternal) {
+        throw new Error("Confirm the files from outside the skill folder first.");
+      }
+      const created = await client.createSkillVersion(subject.files, subject.commitMessage);
+      if (subject.local) {
+        await deps.localStore.setSyncBase(subject.name, { version: created.version, hash: contentHash(subject.files) });
+      }
+      return { version: created.version, message: `Synced to Langfuse as v${created.version}.` };
+    },
+    async takeSync(name, langfuseVersion) {
+      const { client } = await langfuseClient();
+      const remote = await client.getSkillVersion(name, langfuseVersion);
+      const files = remote.files.map(({ path: filePath, content }) => ({ path: filePath, content }));
+      const saved = await deps.localStore.save({
+        name,
+        files,
+        syncBase: { version: langfuseVersion, hash: contentHash(files) },
+        externalPaths: [],
+      });
+      return { localVersion: saved.version, message: `Saved Langfuse v${langfuseVersion} as local v${saved.version}.` };
     },
     async testLangfuse() {
       const config = await deps.readConfig();
