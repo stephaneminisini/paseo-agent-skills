@@ -64,7 +64,12 @@ export interface SkillService {
   create(name: string): Promise<{ name: string; version: number }>;
   remove(name: string): Promise<void>;
   previewSync(target: SyncTarget): Promise<SyncPreview>;
-  pushSync(target: SyncTarget, expectedLangfuseVersion: number | null, includeExternal: boolean): Promise<{ version: number; message: string }>;
+  pushSync(
+    target: SyncTarget,
+    expectedLangfuseVersion: number | null,
+    expectedHash: string,
+    confirmedExternal: string[],
+  ): Promise<{ version: number; message: string }>;
   takeSync(name: string, langfuseVersion: number): Promise<{ localVersion: number; message: string }>;
 }
 
@@ -222,6 +227,7 @@ export function createSkillService(deps: SkillServiceDeps): SkillService {
     name: string;
     files: SkillText[];
     externalPaths: string[];
+    reviewRequired: boolean;
     commitMessage: string;
     local: LocalSkill | null;
   }
@@ -234,7 +240,9 @@ export function createSkillService(deps: SkillServiceDeps): SkillService {
       return {
         name: skill.name,
         files: folder.files.map(({ path: filePath, content }) => ({ path: filePath, content })),
-        externalPaths: skill.externalPaths,
+        externalPaths: skill.externalPaths ?? [],
+        // Imported before external files were tracked: show the files instead of pushing blindly.
+        reviewRequired: skill.externalPaths === null && skill.source !== null,
         commitMessage: `Synced from Paseo Agent Skills (local v${skill.version})`,
         local: skill,
       };
@@ -246,6 +254,7 @@ export function createSkillService(deps: SkillServiceDeps): SkillService {
       name: folder.name,
       files: folder.files.map(({ path: filePath, content }) => ({ path: filePath, content })),
       externalPaths: folder.files.filter((file) => file.external).map((file) => file.path),
+      reviewRequired: false,
       commitMessage: `Synced from Paseo Agent Skills (${foundLabel(found)})`,
       local: null,
     };
@@ -402,7 +411,13 @@ export function createSkillService(deps: SkillServiceDeps): SkillService {
       const { client } = await langfuseClient();
       const latest = await latestFiles(client, subject.name);
       const base = subject.local?.syncBase ?? null;
-      const common = { name: subject.name, baseVersion: base?.version ?? null, externalPaths: subject.externalPaths };
+      const common = {
+        name: subject.name,
+        baseVersion: base?.version ?? null,
+        externalPaths: subject.externalPaths,
+        contentHash: contentHash(subject.files),
+        reviewRequired: subject.reviewRequired,
+      };
       if (!latest) {
         return { ...common, outcome: "create", langfuseVersion: null, files: compareFiles(subject.files, []) };
       }
@@ -415,14 +430,17 @@ export function createSkillService(deps: SkillServiceDeps): SkillService {
       const outcome = subject.local && base?.version === latest.version ? "fast-forward" : "conflict";
       return { ...common, outcome, langfuseVersion: latest.version, files: compareFiles(subject.files, latest.files) };
     },
-    async pushSync(target, expectedLangfuseVersion, includeExternal) {
+    async pushSync(target, expectedLangfuseVersion, expectedHash, confirmedExternal) {
       const subject = await loadSyncSubject(target);
       const { client } = await langfuseClient();
       const latest = await client.resolveSkill(subject.name, "latest");
       if ((latest?.version ?? null) !== expectedLangfuseVersion) {
         throw new Error("Langfuse changed again since the review; review again.");
       }
-      if (subject.externalPaths.length > 0 && !includeExternal) {
+      if (contentHash(subject.files) !== expectedHash) {
+        throw new Error("This skill changed since the review; review again.");
+      }
+      if (subject.externalPaths.some((externalPath) => !confirmedExternal.includes(externalPath))) {
         throw new Error("Confirm the files from outside the skill folder first.");
       }
       const created = await client.createSkillVersion(subject.files, subject.commitMessage);

@@ -49,8 +49,8 @@ export default function contribute(server: PluginServerContext) {
   server.handle(readSkillRpc, ({ ref }) => service.read(ref));
   server.handle(saveSkillRpc, ({ name, files, expectedVersion }) => service.save(name, files, expectedVersion));
   server.handle(previewSyncRpc, ({ target }) => service.previewSync(target));
-  server.handle(pushSyncRpc, ({ target, expectedLangfuseVersion, includeExternal }) =>
-    service.pushSync(target, expectedLangfuseVersion, includeExternal),
+  server.handle(pushSyncRpc, ({ target, expectedLangfuseVersion, expectedHash, confirmedExternal }) =>
+    service.pushSync(target, expectedLangfuseVersion, expectedHash, confirmedExternal),
   );
   server.handle(takeSyncRpc, ({ name, langfuseVersion }) => service.takeSync(name, langfuseVersion));
   server.handle(createSkillRpc, ({ name }) => service.create(name));

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { collapseDiff, lineDiff, MAX_DIFF_LINES } from "../shared/diff";
+import { collapseDiff, limitLines, lineDiff, MAX_DIFF_LINES } from "../shared/diff";
 
 describe("lineDiff", () => {
   it("marks identical text as same", () => {
@@ -84,5 +84,13 @@ describe("collapseDiff", () => {
       { kind: "same", text: "t2" },
       { kind: "same", text: "t3" },
     ]);
+  });
+});
+
+describe("limitLines", () => {
+  it("keeps the first lines and reports how many were cut", () => {
+    const lines = Array.from({ length: 10 }, (_, index) => ({ kind: "added" as const, text: `${index}` }));
+    expect(limitLines(lines, 4)).toEqual({ lines: lines.slice(0, 4), hidden: 6 });
+    expect(limitLines(lines, 20)).toEqual({ lines, hidden: 0 });
   });
 });

@@ -34,8 +34,8 @@ export interface LocalSkill {
   hash: string;
   /** Langfuse version and hash this copy was last synced from or with. */
   syncBase: SyncBase | null;
-  /** Paths that came from outside the skill folder through symlinks at import. */
-  externalPaths: string[];
+  /** Paths that came from outside the skill folder through symlinks at import; null when not tracked (records from before phase 3). */
+  externalPaths: string[] | null;
   /** Folder of the current version. */
   dir: string;
 }
@@ -136,7 +136,7 @@ export function createLocalStore(options: { root: string; now?: () => Date }): L
       sourceHash: record.sourceHash,
       hash,
       syncBase: record.syncBase ?? null,
-      externalPaths: record.externalPaths ?? [],
+      externalPaths: record.externalPaths ?? null,
       dir,
     };
   }

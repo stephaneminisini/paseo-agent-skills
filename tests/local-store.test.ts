@@ -226,6 +226,6 @@ describe("hash, sync base and external paths", () => {
     const read = await store.get("old");
     expect(read?.hash).toBe(saved.hash);
     expect(read?.syncBase).toBeNull();
-    expect(read?.externalPaths).toEqual([]);
+    expect(read?.externalPaths).toBeNull();
   });
 });

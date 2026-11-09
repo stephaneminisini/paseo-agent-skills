@@ -74,12 +74,18 @@ function service() {
 
 const LOCAL = { kind: "local" as const, name: "cut-release" };
 
+/** Pushes exactly what a fresh preview showed, confirming its external files. */
+async function pushReviewed(skills: ReturnType<typeof service>, target: Parameters<ReturnType<typeof service>["pushSync"]>[0]) {
+  const preview = await skills.previewSync(target);
+  return skills.pushSync(target, preview.langfuseVersion, preview.contentHash, preview.externalPaths);
+}
+
 describe("sync a local skill", () => {
   it("creates the skill in Langfuse and records the base", async () => {
     await store.save({ name: "cut-release", files: [{ path: "SKILL.md", content: skillMd("cut-release") }] });
     const skills = service();
     expect((await skills.previewSync(LOCAL)).outcome).toBe("create");
-    const pushed = await skills.pushSync(LOCAL, null, false);
+    const pushed = await pushReviewed(skills, LOCAL);
     expect(pushed).toEqual({ version: 1, message: "Synced to Langfuse as v1." });
     expect(langfuse.created[0]?.commitMessage).toBe("Synced from Paseo Agent Skills (local v1)");
     const row = (await skills.list({})).rows.find((candidate) => candidate.name === "cut-release");
@@ -104,7 +110,7 @@ describe("sync a local skill", () => {
   it("fast-forwards local edits when Langfuse is unchanged", async () => {
     await store.save({ name: "cut-release", files: [{ path: "SKILL.md", content: skillMd("cut-release") }] });
     const skills = service();
-    await skills.pushSync(LOCAL, null, false);
+    await pushReviewed(skills, LOCAL);
     await store.save({ name: "cut-release", files: [{ path: "SKILL.md", content: skillMd("cut-release", "# edited\n") }] });
     expect((await skills.list({})).rows[0]?.local?.localChanges).toBe(true);
     const preview = await skills.previewSync(LOCAL);
@@ -112,7 +118,7 @@ describe("sync a local skill", () => {
     expect(preview.files).toEqual([
       { path: "SKILL.md", change: "changed", local: skillMd("cut-release", "# edited\n"), langfuse: skillMd("cut-release") },
     ]);
-    expect((await skills.pushSync(LOCAL, 1, false)).version).toBe(2);
+    expect((await pushReviewed(skills, LOCAL)).version).toBe(2);
     expect((await skills.list({})).rows[0]?.local?.localChanges).toBe(false);
   });
 
@@ -126,7 +132,7 @@ describe("sync a local skill", () => {
       ],
     });
     const skills = service();
-    await skills.pushSync(LOCAL, null, false);
+    await pushReviewed(skills, LOCAL);
     langfuse.versions.get("cut-release")?.push([
       { path: "SKILL.md", content: skillMd("cut-release") },
       { path: "theirs.sh", content: "theirs" },
@@ -146,7 +152,7 @@ describe("sync a local skill", () => {
     const skills = service();
     const preview = await skills.previewSync(LOCAL);
     langfuse.versions.get("cut-release")?.push([{ path: "SKILL.md", content: skillMd("cut-release", "# 2\n") }]);
-    await expect(skills.pushSync(LOCAL, preview.langfuseVersion, false)).rejects.toThrow(
+    await expect(skills.pushSync(LOCAL, preview.langfuseVersion, preview.contentHash, [])).rejects.toThrow(
       "Langfuse changed again since the review; review again.",
     );
     expect(langfuse.versions.get("cut-release")).toHaveLength(2);
@@ -170,9 +176,12 @@ describe("sync a local skill", () => {
       externalPaths: ["SKILL.md"],
     });
     const skills = service();
-    expect((await skills.previewSync(LOCAL)).externalPaths).toEqual(["SKILL.md"]);
-    await expect(skills.pushSync(LOCAL, null, false)).rejects.toThrow("Confirm the files from outside the skill folder first.");
-    expect((await skills.pushSync(LOCAL, null, true)).version).toBe(1);
+    const preview = await skills.previewSync(LOCAL);
+    expect(preview.externalPaths).toEqual(["SKILL.md"]);
+    await expect(skills.pushSync(LOCAL, null, preview.contentHash, [])).rejects.toThrow(
+      "Confirm the files from outside the skill folder first.",
+    );
+    expect((await skills.pushSync(LOCAL, null, preview.contentHash, ["SKILL.md"])).version).toBe(1);
   });
 });
 
@@ -186,7 +195,7 @@ describe("sync a found skill", () => {
     const id = (await skills.list({})).rows.find((row) => row.name === "review")?.found[0]?.id ?? "";
     const preview = await skills.previewSync({ kind: "found", id });
     expect(preview.outcome).toBe("conflict");
-    const pushed = await skills.pushSync({ kind: "found", id }, 1, false);
+    const pushed = await skills.pushSync({ kind: "found", id }, 1, preview.contentHash, []);
     expect(pushed.version).toBe(2);
     expect(langfuse.created[0]?.commitMessage).toBe("Synced from Paseo Agent Skills (~/.claude/skills)");
     expect(await store.get("review")).toBeNull();
@@ -201,7 +210,58 @@ describe("sync a found skill", () => {
     await symlink(outside, path.join(dir, "SKILL.md"));
     const skills = service();
     const id = (await skills.list({})).rows.find((row) => row.name === "autoplan")?.found[0]?.id ?? "";
-    expect((await skills.previewSync({ kind: "found", id })).externalPaths).toEqual(["SKILL.md"]);
-    await expect(skills.pushSync({ kind: "found", id }, null, false)).rejects.toThrow("Confirm the files");
+    const preview = await skills.previewSync({ kind: "found", id });
+    expect(preview.externalPaths).toEqual(["SKILL.md"]);
+    await expect(skills.pushSync({ kind: "found", id }, null, preview.contentHash, [])).rejects.toThrow("Confirm the files");
+  });
+});
+
+describe("review fixes", () => {
+  it("refuses a push when the content changed since the review", async () => {
+    await store.save({ name: "cut-release", files: [{ path: "SKILL.md", content: skillMd("cut-release") }] });
+    const skills = service();
+    const preview = await skills.previewSync(LOCAL);
+    await store.save({ name: "cut-release", files: [{ path: "SKILL.md", content: skillMd("cut-release", "# later\n") }] });
+    await expect(skills.pushSync(LOCAL, preview.langfuseVersion, preview.contentHash, [])).rejects.toThrow(
+      "This skill changed since the review; review again.",
+    );
+    expect(langfuse.created).toHaveLength(0);
+  });
+
+  it("refuses a push when an external file was not part of the confirmation", async () => {
+    await store.save({
+      name: "cut-release",
+      files: [
+        { path: "SKILL.md", content: skillMd("cut-release") },
+        { path: "run.sh", content: "echo" },
+      ],
+      externalPaths: ["SKILL.md", "run.sh"],
+    });
+    const skills = service();
+    const preview = await skills.previewSync(LOCAL);
+    await expect(skills.pushSync(LOCAL, null, preview.contentHash, ["SKILL.md"])).rejects.toThrow(
+      "Confirm the files from outside the skill folder first.",
+    );
+  });
+
+  it("requires a review for an imported record without external tracking", async () => {
+    await store.save({
+      name: "cut-release",
+      files: [{ path: "SKILL.md", content: skillMd("cut-release") }],
+      source: { kind: "path", path: "/gone" },
+      sourceHash: "x",
+    });
+    const recordPath = path.join(root, "local", "cut-release", "skill.json");
+    const record = JSON.parse(await readFile(recordPath, "utf8"));
+    delete record.externalPaths;
+    await writeFile(recordPath, JSON.stringify(record));
+    const preview = await service().previewSync(LOCAL);
+    expect(preview.outcome).toBe("create");
+    expect(preview.reviewRequired).toBe(true);
+  });
+
+  it("does not require a review for a skill created in Paseo", async () => {
+    await store.save({ name: "cut-release", files: [{ path: "SKILL.md", content: skillMd("cut-release") }], source: null });
+    expect((await service().previewSync(LOCAL)).reviewRequired).toBe(false);
   });
 });

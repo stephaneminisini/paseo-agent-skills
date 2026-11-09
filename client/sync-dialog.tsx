@@ -1,9 +1,12 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import { useRpc } from "@getpaseo/plugin/client";
 import { Modal } from "@getpaseo/plugin/client/ui";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import { collapseDiff, lineDiff } from "../shared/diff";
+import { collapseDiff, limitLines, lineDiff } from "../shared/diff";
+
+/** Diff lines rendered at once; more would stall the modal. */
+const MAX_RENDERED_LINES = 1500;
 import { previewSyncRpc, pushSyncRpc, type SyncPreview, type SyncTarget, takeSyncRpc } from "../shared/skills";
 import { ActionButton } from "./action-button";
 import { MONOSPACE } from "./skill-viewer";
@@ -43,7 +46,12 @@ export function SyncDialog({ target, theme, onClose }: SyncDialogProps) {
   async function doPush(current: SyncPreview, external: boolean) {
     setState({ kind: "working" });
     try {
-      const result = await push({ target, expectedLangfuseVersion: current.langfuseVersion, includeExternal: external });
+      const result = await push({
+        target,
+        expectedLangfuseVersion: current.langfuseVersion,
+        expectedHash: current.contentHash,
+        confirmedExternal: external ? current.externalPaths : [],
+      });
       setState({ kind: "done", message: result.message, changed: true });
     } catch (error) {
       fail(error, current);
@@ -69,7 +77,11 @@ export function SyncDialog({ target, theme, onClose }: SyncDialogProps) {
         if (cancelled) return;
         if (result.outcome === "identical") {
           setState({ kind: "done", message: `Already in Langfuse as v${result.langfuseVersion}.`, changed: true });
-        } else if ((result.outcome === "create" || result.outcome === "fast-forward") && result.externalPaths.length === 0) {
+        } else if (
+          (result.outcome === "create" || result.outcome === "fast-forward") &&
+          result.externalPaths.length === 0 &&
+          !result.reviewRequired
+        ) {
           await doPush(result, false);
         } else {
           setSelected(result.files.find((file) => file.change !== "same")?.path ?? result.files[0]?.path ?? null);
@@ -87,6 +99,13 @@ export function SyncDialog({ target, theme, onClose }: SyncDialogProps) {
   }, []);
 
   const close = () => onClose(state.kind === "done" && state.changed);
+  const reviewed = state.kind === "review" ? state.preview : state.kind === "error" ? state.preview : null;
+  const shown = useMemo(() => {
+    const file = reviewed?.files.find((candidate) => candidate.path === selected);
+    if (!file) return null;
+    const diff = lineDiff(file.langfuse ?? "", file.local ?? "");
+    return { file, display: diff === null ? null : limitLines(collapseDiff(diff), MAX_RENDERED_LINES) };
+  }, [reviewed, selected]);
   const current = state.kind === "review" ? state.preview : state.kind === "error" ? state.preview : null;
 
   let body;
@@ -111,8 +130,8 @@ export function SyncDialog({ target, theme, onClose }: SyncDialogProps) {
       </View>
     );
   } else {
-    const file = current.files.find((candidate) => candidate.path === selected);
-    const diff = file ? lineDiff(file.langfuse ?? "", file.local ?? "") : null;
+    const file = shown?.file;
+    const display = shown?.display ?? null;
     const heading =
       current.outcome === "create"
         ? "This skill is not in Langfuse yet."
@@ -123,6 +142,11 @@ export function SyncDialog({ target, theme, onClose }: SyncDialogProps) {
     body = (
       <View style={{ gap: 12 }}>
         <Text style={text}>{heading}</Text>
+        {current.reviewRequired ? (
+          <Text style={{ color: colors.statusWarning }}>
+            This skill was imported before files from outside its folder were tracked. Check the files before pushing.
+          </Text>
+        ) : null}
         {state.kind === "error" ? <Text style={{ color: colors.statusDanger }}>{state.message}</Text> : null}
         <View style={{ gap: 2 }}>
           {current.files.map((candidate) => (
@@ -149,10 +173,10 @@ export function SyncDialog({ target, theme, onClose }: SyncDialogProps) {
         {file ? (
           <View style={{ backgroundColor: colors.surface1, borderRadius: 8, padding: 8 }}>
             <Text style={{ ...muted, marginBottom: 4 }}>{`${file.path}: Langfuse → this copy`}</Text>
-            {diff === null ? (
+            {display === null ? (
               <Text style={muted}>Too large to compare line by line.</Text>
             ) : (
-              collapseDiff(diff).map((line, index) =>
+              display.lines.map((line, index) =>
                 line.kind === "skip" ? (
                   <Text key={index} style={{ ...muted, fontFamily: MONOSPACE, fontSize: 12 }}>
                     {`… ${line.count} unchanged lines …`}
@@ -177,6 +201,9 @@ export function SyncDialog({ target, theme, onClose }: SyncDialogProps) {
                 ),
               )
             )}
+            {display && display.hidden > 0 ? (
+              <Text style={muted}>{`${display.hidden} more lines not shown.`}</Text>
+            ) : null}
           </View>
         ) : null}
         {needsConfirm ? (

@@ -124,3 +124,8 @@ export function collapseDiff(lines: DiffLine[], context = 3, minRun = 6): Displa
   }
   return out;
 }
+
+/** The first `max` display lines and how many were left out. */
+export function limitLines<T>(lines: T[], max: number): { lines: T[]; hidden: number } {
+  return lines.length > max ? { lines: lines.slice(0, max), hidden: lines.length - max } : { lines, hidden: 0 };
+}

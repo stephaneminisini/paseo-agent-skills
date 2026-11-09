@@ -85,6 +85,7 @@ export function SkillsScreen({ theme, layout, host }: PluginScreenProps) {
   const [deleting, setDeleting] = useState<string | null>(null);
   const [reimportConfirm, setReimportConfirm] = useState<string | null>(null);
   const [syncTarget, setSyncTarget] = useState<SyncTarget | null>(null);
+  const [syncConfirm, setSyncConfirm] = useState<SyncTarget | null>(null);
   const createSkill = useRpc(createSkillRpc);
   const deleteSkill = useRpc(deleteSkillRpc);
   const unsaved = new Set(drafts.unsaved());
@@ -180,11 +181,14 @@ export function SkillsScreen({ theme, layout, host }: PluginScreenProps) {
                       label="Sync"
                       theme={theme}
                       disabled={busy}
-                      onPress={() =>
-                        setSyncTarget(
-                          row.local ? { kind: "local", name: row.name } : { kind: "found", id: importable?.id ?? "" },
-                        )
-                      }
+                      onPress={() => {
+                        const target: SyncTarget = row.local
+                          ? { kind: "local", name: row.name }
+                          : { kind: "found", id: importable?.id ?? "" };
+                        // "Take Langfuse's" would leave an unsaved draft based on an old version.
+                        if (row.local && drafts.isUnsaved(draftKey(host.id, row.name))) setSyncConfirm(target);
+                        else setSyncTarget(target);
+                      }}
                     />
                   ) : null}
                   {editable && row.local ? (
@@ -349,6 +353,19 @@ export function SkillsScreen({ theme, layout, host }: PluginScreenProps) {
             </View>
           </Modal.Content>
         </Modal>
+      ) : null}
+      {syncConfirm && syncConfirm.kind === "local" ? (
+        <ConfirmModal
+          title="Unsaved changes"
+          message={`You have unsaved changes to ${syncConfirm.name}. Sync uses the last saved version, and taking Langfuse's copy leaves your draft based on an older version.`}
+          confirmLabel="Continue"
+          theme={theme}
+          onCancel={() => setSyncConfirm(null)}
+          onConfirm={() => {
+            setSyncTarget(syncConfirm);
+            setSyncConfirm(null);
+          }}
+        />
       ) : null}
       {syncTarget ? (
         <SyncDialog

@@ -131,6 +131,10 @@ export const SyncPreviewSchema = z.object({
   /** Empty for identical. */
   files: z.array(SyncFileSchema),
   externalPaths: z.array(z.string()),
+  /** contentHash of the files shown; push must send the same. */
+  contentHash: z.string(),
+  /** The files must be reviewed before pushing (external files not tracked for this skill). */
+  reviewRequired: z.boolean(),
 });
 export type SyncPreview = z.infer<typeof SyncPreviewSchema>;
 
@@ -144,7 +148,8 @@ export const pushSyncRpc = defineRpc({
   input: z.object({
     target: SyncTargetSchema,
     expectedLangfuseVersion: z.number().nullable(),
-    includeExternal: z.boolean(),
+    expectedHash: z.string(),
+    confirmedExternal: z.array(z.string()),
   }),
   output: z.object({ version: z.number(), message: z.string() }),
 });
