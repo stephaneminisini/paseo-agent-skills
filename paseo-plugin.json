@@ -4,5 +4,9 @@
   "description": "Attach skills from Langfuse or a local store to any agent launch.",
   "requirements": {
     "paseo": ">=0.15.0"
-  }
+  },
+  "media": [
+    "assets/skills-screen.png",
+    "assets/attach-skill.png"
+  ]
 }
