@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { access, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { SkillFile, SkillVersion } from "./langfuse";
+import type { SkillText } from "./skill-folder";
 
 export type SkillStoreErrorKind =
   | "unsafe-name"
@@ -27,6 +28,9 @@ export class SkillStoreError extends Error {
 
 /** Written last into a version folder; its presence marks the folder complete. */
 export const MANIFEST_FILE = ".langfuse-skill.json";
+/** Written last into a local version folder; its presence marks the folder complete. */
+export const LOCAL_MARKER_FILE = ".agent-skill.json";
+const RESERVED_FILES = new Set([MANIFEST_FILE, LOCAL_MARKER_FILE]);
 
 export interface StoreMeta {
   baseUrl: string;
@@ -61,7 +65,7 @@ function checkFilePath(dir: string, filePath: string): string {
     new SkillStoreError("unsafe-path", `Skill file path ${JSON.stringify(filePath)} is not allowed.`);
   if (filePath.length === 0 || /^[/\\]/.test(filePath) || /^[A-Za-z]:/.test(filePath)) throw unsafe();
   const segments = filePath.split(/[/\\]/);
-  if (segments.some(isUnsafeSegment) || filePath === MANIFEST_FILE) throw unsafe();
+  if (segments.some(isUnsafeSegment) || RESERVED_FILES.has(filePath)) throw unsafe();
   const target = path.resolve(dir, ...segments);
   if (!target.startsWith(dir + path.sep)) throw unsafe();
   return target;
@@ -71,42 +75,56 @@ function sha256Base64(content: string): string {
   return createHash("sha256").update(content, "utf8").digest("base64");
 }
 
-/** Validates every file before anything is written; returns each file's target path. */
-function plan(dir: string, skill: SkillVersion): Array<{ file: SkillFile; target: string }> {
+/**
+ * Checks a skill's file paths: each stays inside `dir`, none repeats, none is both a file and a
+ * folder, and SKILL.md is at the root. Returns each path's target in `dir`, in input order.
+ *
+ * @throws {SkillStoreError} kinds "unsafe-path", "duplicate-path", "path-conflict", "no-skill-md".
+ */
+export function checkSkillPaths(dir: string, paths: string[], label: string): string[] {
   const seen = new Set<string>();
-  const entries = skill.files.map((file) => {
-    const target = checkFilePath(dir, file.path);
+  const targets = paths.map((filePath) => {
+    const target = checkFilePath(dir, filePath);
     if (seen.has(target)) {
-      throw new SkillStoreError("duplicate-path", `Skill ${skill.name} lists ${file.path} twice.`);
+      throw new SkillStoreError("duplicate-path", `Skill ${label} lists ${filePath} twice.`);
     }
     seen.add(target);
-    if (!file.contentType.startsWith("text/")) {
-      throw new SkillStoreError(
-        "non-text",
-        `Skill ${skill.name} v${skill.version} contains a non-text file (${file.path}, ${file.contentType}), which this plugin does not support yet.`,
-      );
-    }
-    if (sha256Base64(file.content) !== file.sha256Hash) {
-      throw new SkillStoreError(
-        "hash-mismatch",
-        `Skill ${skill.name} v${skill.version} file ${file.path} does not match its hash.`,
-      );
-    }
-    return { file, target };
+    return target;
   });
   for (const target of seen) {
-    const other = [...seen].find((candidate) => candidate.startsWith(target + path.sep));
-    if (other) {
+    if ([...seen].some((candidate) => candidate.startsWith(target + path.sep))) {
       throw new SkillStoreError(
         "path-conflict",
-        `Skill ${skill.name} v${skill.version} uses ${path.relative(dir, target)} as both a file and a folder.`,
+        `Skill ${label} uses ${path.relative(dir, target)} as both a file and a folder.`,
       );
     }
   }
   if (!seen.has(path.join(dir, SKILL_MD))) {
-    throw new SkillStoreError("no-skill-md", `Skill ${skill.name} v${skill.version} has no SKILL.md.`);
+    throw new SkillStoreError("no-skill-md", `Skill ${label} has no SKILL.md.`);
   }
-  return entries;
+  return targets;
+}
+
+/** Validates every file before anything is written; returns each file's target path. */
+function plan(dir: string, skill: SkillVersion): Array<{ file: SkillFile; target: string }> {
+  const label = `${skill.name} v${skill.version}`;
+  const targets = checkSkillPaths(
+    dir,
+    skill.files.map((file) => file.path),
+    label,
+  );
+  return skill.files.map((file, index) => {
+    if (!file.contentType.startsWith("text/")) {
+      throw new SkillStoreError(
+        "non-text",
+        `Skill ${label} contains a non-text file (${file.path}, ${file.contentType}), which this plugin does not support yet.`,
+      );
+    }
+    if (sha256Base64(file.content) !== file.sha256Hash) {
+      throw new SkillStoreError("hash-mismatch", `Skill ${label} file ${file.path} does not match its hash.`);
+    }
+    return { file, target: targets[index] as string };
+  });
 }
 
 async function exists(filePath: string): Promise<boolean> {
@@ -169,29 +187,52 @@ async function store(
       `Asked Langfuse for ${ref.name} v${ref.version} but received ${skill.name} v${skill.version}.`,
     );
   }
+  plan(dir, skill);
+  const manifest = {
+    name: skill.name,
+    version: skill.version,
+    baseUrl: meta.baseUrl,
+    fetchedAt: (meta.now?.() ?? new Date()).toISOString(),
+    files: skill.files.map(({ path: filePath, sha256Hash }) => ({ path: filePath, sha256Hash })),
+  };
+  const downloaded = await writeVersionFolder(dir, skill.files, {
+    file: MANIFEST_FILE,
+    content: `${JSON.stringify(manifest, null, 2)}\n`,
+  });
+  return { dir, downloaded };
+}
+
+/**
+ * Writes `files` plus the completion marker `extra` into a temporary sibling of `dir`, then
+ * renames it into place. Returns false when another writer completed `dir` first. Paths must
+ * already be checked with {@link checkSkillPaths}.
+ *
+ * @throws {SkillStoreError} kind "write-failed" when writing or moving fails.
+ */
+export async function writeVersionFolder(
+  dir: string,
+  files: SkillText[],
+  extra: { file: string; content: string },
+): Promise<boolean> {
+  const markerPath = path.join(dir, extra.file);
+  if (await exists(markerPath)) return false;
   const tmpDir = `${dir}.tmp-${randomUUID()}`;
-  const entries = plan(tmpDir, skill);
   try {
     try {
-      for (const { file, target } of entries) {
+      for (const file of files) {
+        const target = path.join(tmpDir, ...file.path.split("/"));
         await mkdir(path.dirname(target), { recursive: true });
         await writeFile(target, file.content, "utf8");
       }
-      const manifest = {
-        name: skill.name,
-        version: skill.version,
-        baseUrl: meta.baseUrl,
-        fetchedAt: (meta.now?.() ?? new Date()).toISOString(),
-        files: skill.files.map(({ path: filePath, sha256Hash }) => ({ path: filePath, sha256Hash })),
-      };
-      await writeFile(path.join(tmpDir, MANIFEST_FILE), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+      await mkdir(tmpDir, { recursive: true });
+      await writeFile(path.join(tmpDir, extra.file), extra.content, "utf8");
     } catch (error) {
       throw new SkillStoreError(
         "write-failed",
-        `Could not store skill ${skill.name} v${skill.version}: ${error instanceof Error ? error.message : String(error)}`,
+        `Could not store skill in ${dir}: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-    return { dir, downloaded: await moveIntoPlace(tmpDir, dir, manifestPath) };
+    return await moveIntoPlace(tmpDir, dir, markerPath);
   } finally {
     await rm(tmpDir, { recursive: true, force: true });
   }

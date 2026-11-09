@@ -157,3 +157,36 @@ describe("createLangfuseClient", () => {
     });
   });
 });
+
+describe("createSkillVersion", () => {
+  it("posts every file with a commit message", async () => {
+    let body = "";
+    let method = "";
+    let auth: string | undefined;
+    const server = createServer((request, response) => {
+      method = request.method ?? "";
+      auth = request.headers.authorization;
+      request.on("data", (chunk) => {
+        body += chunk;
+      });
+      request.on("end", () => json(response, 200, { name: "cut-release", version: 5, labels: ["latest"] }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    servers.push(server);
+    const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const files = [{ path: "SKILL.md", content: "---\nname: cut-release\n---\n" }];
+    const created = await createLangfuseClient({ baseUrl, keys: KEYS }).createSkillVersion(files, "msg");
+    expect(created).toEqual({ name: "cut-release", version: 5 });
+    expect(method).toBe("POST");
+    expect(auth).toBe(`Basic ${Buffer.from("pk:sk").toString("base64")}`);
+    expect(JSON.parse(body)).toEqual({ files, commitMessage: "msg" });
+  });
+
+  it("explains a 403 on write", async () => {
+    const { baseUrl } = await startServer((_url, _raw, response) => json(response, 403, {}));
+    const error = await rejection(
+      createLangfuseClient({ baseUrl, keys: KEYS }).createSkillVersion([{ path: "SKILL.md", content: "x" }], "m"),
+    );
+    expect(error.message).toBe("Langfuse rejected the keys (HTTP 403). Syncing needs keys that can write skills.");
+  });
+});
