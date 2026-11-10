@@ -5,6 +5,7 @@ import type { PluginAttachmentItem, PluginAttachmentSearchPayload } from "@getpa
 import type { Config } from "../shared/settings";
 import {
   attachmentText,
+  currentNoteText,
   newSkillTemplate,
   type ReadSkillResult,
   type SkillRefInput,
@@ -71,6 +72,8 @@ export interface SkillService {
     confirmedExternal: string[],
   ): Promise<{ version: number; message: string }>;
   takeSync(name: string, langfuseVersion: number): Promise<{ localVersion: number; message: string }>;
+  /** Text to paste into a schedule prompt: pinned to the current version, or following the latest. */
+  note(name: string, mode: "pinned" | "current"): Promise<{ text: string }>;
 }
 
 /** Runs `task` over `inputs` with at most `limit` in flight, keeping input order. */
@@ -460,6 +463,16 @@ export function createSkillService(deps: SkillServiceDeps): SkillService {
         externalPaths: [],
       });
       return { localVersion: saved.version, message: `Saved Langfuse v${langfuseVersion} as local v${saved.version}.` };
+    },
+    async note(name, mode) {
+      if (!(await deps.localStore.get(name))) throw new Error("Skill not found; refresh the list.");
+      const skill = await deps.localStore.ensureCurrent(name);
+      return {
+        text:
+          mode === "pinned"
+            ? attachmentText(skill.name, "local", skill.version, skill.dir)
+            : currentNoteText(skill.name, skill.currentDir),
+      };
     },
     async testLangfuse() {
       const config = await deps.readConfig();

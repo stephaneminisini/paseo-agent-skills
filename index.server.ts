@@ -17,6 +17,7 @@ import {
   takeSyncRpc,
   readSkillRpc,
   reimportRpc,
+  skillNoteRpc,
   saveSkillRpc,
   searchSkillsRpc,
   testLangfuseRpc,
@@ -53,6 +54,7 @@ export default function contribute(server: PluginServerContext) {
     service.pushSync(target, expectedLangfuseVersion, expectedHash, confirmedExternal),
   );
   server.handle(takeSyncRpc, ({ name, langfuseVersion }) => service.takeSync(name, langfuseVersion));
+  server.handle(skillNoteRpc, ({ name, mode }) => service.note(name, mode));
   server.handle(createSkillRpc, ({ name }) => service.create(name));
   server.handle(deleteSkillRpc, async ({ name }) => {
     await service.remove(name);

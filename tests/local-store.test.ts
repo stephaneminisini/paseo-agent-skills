@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, readlink, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -56,6 +56,7 @@ describe("createLocalStore", () => {
       syncBase: null,
       externalPaths: [],
       dir: path.join(root, "cut-release", "v1"),
+      currentDir: path.join(root, "cut-release", "current"),
     });
     expect(await readFile(path.join(saved.dir, "scripts", "run.sh"), "utf8")).toBe("echo cut-release\n");
     expect(await store.get("cut-release")).toEqual(saved);
@@ -227,5 +228,34 @@ describe("hash, sync base and external paths", () => {
     expect(read?.hash).toBe(saved.hash);
     expect(read?.syncBase).toBeNull();
     expect(read?.externalPaths).toBeNull();
+  });
+});
+
+describe("current link", () => {
+  it("points current at the latest saved version", async () => {
+    const store = createLocalStore({ root, now: NOW });
+    const first = await store.save({ name: "cut-release", files: files("cut-release", "# one\n") });
+    expect(first.currentDir).toBe(path.join(root, "cut-release", "current"));
+    expect(await readlink(first.currentDir)).toBe("v1");
+    await store.save({ name: "cut-release", files: files("cut-release", "# two\n") });
+    expect(await readlink(first.currentDir)).toBe("v2");
+    expect(await readFile(path.join(first.currentDir, "SKILL.md"), "utf8")).toContain("# two");
+    expect(await readFile(path.join(first.dir, "SKILL.md"), "utf8")).toContain("# one");
+  });
+
+  it("removes current on delete and keeps version folders", async () => {
+    const store = createLocalStore({ root, now: NOW });
+    const saved = await store.save({ name: "cut-release", files: files("cut-release") });
+    await store.remove("cut-release");
+    await expect(readlink(saved.currentDir)).rejects.toThrow();
+    expect(await readFile(path.join(saved.dir, "SKILL.md"), "utf8")).toContain("cut-release");
+  });
+
+  it("creates current for skills saved before it existed", async () => {
+    const store = createLocalStore({ root, now: NOW });
+    const saved = await store.save({ name: "cut-release", files: files("cut-release") });
+    await rm(saved.currentDir);
+    expect((await store.ensureCurrent("cut-release")).currentDir).toBe(saved.currentDir);
+    expect(await readlink(saved.currentDir)).toBe("v1");
   });
 });
