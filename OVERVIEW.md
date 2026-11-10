@@ -34,6 +34,16 @@ and the picker while agents already using it keep their copy.
 Langfuse and found skills open read-only. On a phone every skill opens read-only: pick a file to
 read it.
 
+## Use a skill in a schedule
+
+Schedules take a plain prompt, so they have no **Attach** menu. Press **Copy note** on a local
+skill and paste the note into the schedule's prompt instead. Choose:
+
+- **Pinned to vN**: the schedule keeps using that version, even after you save new ones.
+- **Always the latest version**: the note points at the skill's `current` folder, which follows
+  every save, including edits you have not checked yet. Deleting the skill removes `current`, so
+  the schedule's agent stops finding it instead of using a deleted skill.
+
 ## Sync to Langfuse
 
 **Sync** pushes a local or found skill to Langfuse as a new version, so other hosts can use it.

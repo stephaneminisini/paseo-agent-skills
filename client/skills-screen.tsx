@@ -20,6 +20,7 @@ import {
 import { type Badge, filterRows, rowBadges, type SkillFilter } from "../shared/skills-view";
 import { ActionButton } from "./action-button";
 import { ConfirmModal } from "./confirm-modal";
+import { CopyNoteModal } from "./copy-note-modal";
 import { drafts } from "./drafts";
 import { SkillEditor } from "./skill-editor";
 import { SkillViewer } from "./skill-viewer";
@@ -86,6 +87,7 @@ export function SkillsScreen({ theme, layout, host }: PluginScreenProps) {
   const [reimportConfirm, setReimportConfirm] = useState<string | null>(null);
   const [syncTarget, setSyncTarget] = useState<SyncTarget | null>(null);
   const [syncConfirm, setSyncConfirm] = useState<SyncTarget | null>(null);
+  const [noteFor, setNoteFor] = useState<{ name: string; version: number } | null>(null);
   const createSkill = useRpc(createSkillRpc);
   const deleteSkill = useRpc(deleteSkillRpc);
   const unsaved = new Set(drafts.unsaved());
@@ -176,6 +178,13 @@ export function SkillsScreen({ theme, layout, host }: PluginScreenProps) {
                     <BadgeChip badge={{ label: "Unsaved", tone: "warning" }} theme={theme} />
                   ) : null}
                   <View style={{ flex: 1 }} />
+                  {row.local ? (
+                    <ActionButton
+                      label="Copy note"
+                      theme={theme}
+                      onPress={() => row.local && setNoteFor({ name: row.name, version: row.local.version })}
+                    />
+                  ) : null}
                   {editable && (row.local || importable) ? (
                     <ActionButton
                       label="Sync"
@@ -353,6 +362,9 @@ export function SkillsScreen({ theme, layout, host }: PluginScreenProps) {
             </View>
           </Modal.Content>
         </Modal>
+      ) : null}
+      {noteFor ? (
+        <CopyNoteModal name={noteFor.name} version={noteFor.version} theme={theme} onClose={() => setNoteFor(null)} />
       ) : null}
       {syncConfirm && syncConfirm.kind === "local" ? (
         <ConfirmModal
