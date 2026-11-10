@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import {
@@ -38,6 +38,8 @@ export interface LocalSkill {
   externalPaths: string[] | null;
   /** Folder of the current version. */
   dir: string;
+  /** Symlink that always points at the latest saved version; for prompts that should follow edits. */
+  currentDir: string;
 }
 
 export type LocalStoreErrorKind = "name-mismatch" | "changed-elsewhere" | "unsafe-name";
@@ -73,11 +75,14 @@ export interface LocalStore {
   save(input: SaveInput): Promise<LocalSkill>;
   /** Records the Langfuse sync base without creating a version. */
   setSyncBase(name: string, base: SyncBase): Promise<LocalSkill>;
+  /** Makes sure the `current` link exists and points at the latest version. */
+  ensureCurrent(name: string): Promise<LocalSkill>;
   /** Removes the skill from the list; its version folders stay for agents still using them. */
   remove(name: string): Promise<void>;
 }
 
 const RECORD_FILE = "skill.json";
+const CURRENT_LINK = "current";
 
 const SourceSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("path"), path: z.string() }),
@@ -138,6 +143,7 @@ export function createLocalStore(options: { root: string; now?: () => Date }): L
       syncBase: record.syncBase ?? null,
       externalPaths: record.externalPaths ?? null,
       dir,
+      currentDir: path.join(skillDir(record.name), CURRENT_LINK),
     };
   }
 
@@ -229,7 +235,20 @@ export function createLocalStore(options: { root: string; now?: () => Date }): L
       ),
     };
     await writeRecord(folder, record);
+    await pointCurrent(folder, version);
     return toSkill(record);
+  }
+
+  /** Atomically points `<folder>/current` at `v<version>` (a relative link, so the store can move). */
+  async function pointCurrent(folder: string, version: number): Promise<void> {
+    const tmp = path.join(folder, `${CURRENT_LINK}.tmp-${randomUUID()}`);
+    await symlink(`v${version}`, tmp);
+    try {
+      await rename(tmp, path.join(folder, CURRENT_LINK));
+    } catch (error) {
+      await rm(tmp, { force: true });
+      throw error;
+    }
   }
 
   return {
@@ -262,7 +281,20 @@ export function createLocalStore(options: { root: string; now?: () => Date }): L
       });
     },
     remove(name) {
-      return enqueue(name, () => rm(path.join(skillDir(name), RECORD_FILE), { force: true }));
+      return enqueue(name, async () => {
+        // Without the link, schedules that follow the latest version stop instead of using a deleted skill.
+        await rm(path.join(skillDir(name), CURRENT_LINK), { force: true });
+        await rm(path.join(skillDir(name), RECORD_FILE), { force: true });
+      });
+    },
+    ensureCurrent(name) {
+      return enqueue(name, async () => {
+        const folder = skillDir(name);
+        const record = await readRecord(folder);
+        if (!record) throw new Error("Skill not found; refresh the list.");
+        await pointCurrent(folder, record.version);
+        return toSkill(record);
+      });
     },
     save(input) {
       return enqueue(input.name, () => saveNow(input));

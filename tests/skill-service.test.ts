@@ -7,7 +7,7 @@ import type { LangfuseClient, SkillFile, SkillRef, SkillSummary, SkillVersion } 
 import { createLocalStore, type LocalStore } from "../server/local-store";
 import { createSkillService } from "../server/skill-service";
 import { ConfigSchema } from "../shared/settings";
-import { attachmentText, newSkillTemplate } from "../shared/skills";
+import { attachmentText, currentNoteText, newSkillTemplate } from "../shared/skills";
 
 function file(filePath: string, content: string, contentType = "text/plain"): SkillFile {
   return {
@@ -362,5 +362,23 @@ describe("reading a skill at the file limit", () => {
     await localStore.save({ name: "full", files: many });
     const result = await service(new FakeLangfuse([])).read({ kind: "local", name: "full" });
     expect(result.files).toHaveLength(200);
+  });
+});
+
+describe("note", () => {
+  it("returns the pinned and the current note for a local skill", async () => {
+    await localStore.save({ name: "pr-review", files: localFiles("pr-review") });
+    await localStore.save({ name: "pr-review", files: localFiles("pr-review", "Changed") });
+    const skills = service(new FakeLangfuse([]));
+    const pinned = await skills.note("pr-review", "pinned");
+    expect(pinned.text).toBe(attachmentText("pr-review", "local", 2, path.join(root, "local", "pr-review", "v2")));
+    const current = await skills.note("pr-review", "current");
+    const dir = path.join(root, "local", "pr-review", "current");
+    expect(current.text).toBe(currentNoteText("pr-review", dir));
+    expect(current.text.split("\n")[0]).toBe('Use the skill "pr-review" (latest saved local version).');
+  });
+
+  it("rejects an unknown skill", async () => {
+    await expect(service(new FakeLangfuse([])).note("nope", "pinned")).rejects.toThrow("Skill not found; refresh the list.");
   });
 });

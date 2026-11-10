@@ -164,6 +164,21 @@ export function newSkillTemplate(name: string): string {
   return `---\nname: ${name}\ndescription: Describe when an agent should use this skill.\n---\n\n# ${name}\n\nInstructions for the agent.\n`;
 }
 
+export const skillNoteRpc = defineRpc({
+  name: "skills.local.note",
+  input: z.object({ name: z.string(), mode: z.enum(["pinned", "current"]) }),
+  output: z.object({ text: z.string() }),
+});
+
+/** Note for prompts that should follow the latest saved local version, e.g. schedules. */
+export function currentNoteText(name: string, dir: string): string {
+  return [
+    `Use the skill "${name}" (latest saved local version).`,
+    `Its files are in ${dir}. Read ${dir}/SKILL.md now and follow it for this task.`,
+    `Where SKILL.md writes <skill-dir>, use ${dir}.`,
+  ].join("\n");
+}
+
 /** The note sent to the agent: where the skill's files are and how to use them. */
 export function attachmentText(name: string, origin: "Langfuse" | "local", version: number, dir: string): string {
   return [
